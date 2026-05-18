@@ -24,17 +24,49 @@
   </style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div id="initial-loader" style="min-height:100vh;background:#eef0f4;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:sans-serif;">
+      <div style="font-size:40px">✨</div>
+      <div style="font-size:18px;font-weight:700;color:#1e293b">GaDigital</div>
+      <div style="font-size:13px;color:#64748b">Cargando...</div>
+    </div>
+  </div>
+  <script>
+    // Remove loader when React takes over
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const loader = document.getElementById('initial-loader');
+        if (loader) loader.style.display = 'none';
+      }, 100);
+    });
+  </script>
 
   <!-- Firebase SDK compat (works with Babel standalone) -->
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script>
+    // Pre-initialize Firebase before React loads
+    window._fbConfig = {
+      apiKey: "AIzaSyAYqEGv6dQPAQVdHYJh2ug3HLqL1TDOClc",
+      authDomain: "gadigital-a51cc.firebaseapp.com",
+      databaseURL: "https://gadigital-a51cc-default-rtdb.firebaseio.com",
+      projectId: "gadigital-a51cc",
+      storageBucket: "gadigital-a51cc.firebasestorage.app",
+      messagingSenderId: "326069780447",
+      appId: "1:326069780447:web:044c60a18122090113ce6a"
+    };
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(window._fbConfig);
+      window._db = firebase.database();
+      console.log("Firebase pre-initialized ✓");
+    } catch(e) { console.error("Firebase pre-init failed:", e); }
+  </script>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 
-  <script type="text/babel">
+  <script type="text/babel" data-presets="react" data-plugins="">
     const { useState, useEffect, useRef, useCallback } = React;
 
     // ─── HELPERS ────────────────────────────────────────────────────────────────
@@ -72,13 +104,13 @@
     };
 
     // ─── FIREBASE DB HELPERS ─────────────────────────────────────────────────────
-    let _db = null;
+    let _db = window._db || null; // use pre-initialized if available
     const initDb = cfg => {
       try {
-        const app = firebase.apps.length
-          ? firebase.app()
-          : firebase.initializeApp(cfg);
+        if (window._db) { _db = window._db; return _db; }
+        const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
         _db = firebase.database(app);
+        window._db = _db;
         return _db;
       } catch(e) { console.error("Firebase init error:", e); return null; }
     };
