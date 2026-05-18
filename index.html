@@ -898,7 +898,7 @@
     }
 
     // ─── CLIENT DETAIL ───────────────────────────────────────────────────────────
-    function ClientDetail({ client, orders, onBack, onAddOrder, onUpdateOrder, onDeleteOrder, onPrint }) {
+    function ClientDetail({ client, orders=[], onBack, onAddOrder, onUpdateOrder, onDeleteOrder, onPrint }) {
       const [editPhoto,setEditPhoto] = useState(null);
       const [editItem,setEditItem]   = useState(null);
       const [ocultarPagados, setOcultarPagados] = useState(true);
@@ -1133,7 +1133,7 @@
     }
 
     // ─── CLIENTS LIST ────────────────────────────────────────────────────────────
-    function ClientsList({ clients, orders, onSelect, onNewClient, onDeleteClient }) {
+    function ClientsList({ clients=[], orders=[], onSelect, onNewClient, onDeleteClient }) {
       const [search,setSearch] = useState("");
       const filtered = clients
         .filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.phone?.includes(search))
@@ -1356,7 +1356,7 @@
       );
     }
 
-    function PlanillaView({ clients, orders, onUpdateOrder }) {
+    function PlanillaView({ clients=[], orders=[], onUpdateOrder }) {
       const [search, setSearch] = useState("");
       const [filtro, setFiltro] = useState("todos");
       const [showResumen, setShowResumen] = useState(false);
@@ -1661,7 +1661,7 @@
     }
 
     // ─── VIAJES VIEW ─────────────────────────────────────────────────────────────
-    function ViajesView({ clients, orders, viajes, onAddViaje, onUpdateViaje, onDeleteViaje, onUpdateOrder }) {
+    function ViajesView({ clients=[], orders=[], viajes=[], onAddViaje, onUpdateViaje, onDeleteViaje, onUpdateOrder }) {
       const [showNew, setShowNew] = useState(false);
       const [selected, setSelected] = useState(null); // viaje id detail view
       const [newName, setNewName] = useState("");
@@ -2082,7 +2082,7 @@
         }
       }, []);
       const [pwHash] = useState(null);
-      const [fbReady, setFbReady] = useState(false);
+      const [fbReady, setFbReady] = useState(true); // render immediately with safe defaults
       const [showSetup, setShowSetup] = useState(false);
       const [showPlanilla, setShowPlanilla] = useState(false);
       const [showViajes, setShowViajes] = useState(false);
