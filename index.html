@@ -26,12 +26,9 @@
 <body>
   <div id="root"></div>
 
-  <!-- Firebase SDK -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-    window._firebaseModules = { initializeApp, getDatabase, ref, onValue, set };
-  </script>
+  <!-- Firebase SDK compat (works with Babel standalone) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -77,27 +74,26 @@
     // ─── FIREBASE DB HELPERS ─────────────────────────────────────────────────────
     let _db = null;
     const initDb = cfg => {
-      const { initializeApp, getDatabase } = window._firebaseModules;
-      const app = initializeApp(cfg, cfg.projectId);
-      _db = getDatabase(app);
-      return _db;
+      try {
+        const app = firebase.apps.length
+          ? firebase.app()
+          : firebase.initializeApp(cfg);
+        _db = firebase.database(app);
+        return _db;
+      } catch(e) { console.error("Firebase init error:", e); return null; }
     };
-    const dbSave = (data, pwHash) => {
+    const dbSave = (data) => {
       if (!_db) return;
-      const { ref, set } = window._firebaseModules;
-      const path = "gadigital/appdata";
-      set(ref(_db, path), data);
+      _db.ref("gadigital/appdata").set(data);
     };
-    const dbListen = (cb, pwHash) => {
+    const dbListen = (cb) => {
       if (!_db) return () => {};
-      const { ref, onValue } = window._firebaseModules;
-      const path = "gadigital/appdata";
-      const r = ref(_db, path);
-      const unsub = onValue(r, snap => {
+      const ref = _db.ref("gadigital/appdata");
+      ref.on("value", snap => {
         const val = snap.val();
-        cb(val && val.clients ? val : { clients:[], orders:[] });
+        cb(val && val.clients ? val : { clients:[], orders:[], viajes:[], catalogo:[] });
       });
-      return unsub;
+      return () => ref.off("value");
     };
 
     // ─── SETUP PASSWORD SCREEN ────────────────────────────────────────────────────
@@ -2125,7 +2121,7 @@
         if (isConnected) {
           skipNextSync.current = true;
           setSyncing(true);
-          dbSave(nd, pwHash);
+          dbSave(nd);
           setTimeout(() => { setSyncing(false); setLastSaved(new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})); }, 800);
         }
       };
