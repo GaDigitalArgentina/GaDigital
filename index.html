@@ -1,0 +1,2274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GaDigital — Panel de Gestión</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #eef0f4; color: #0f172a; font-family: 'Sora', sans-serif; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    @media print {
+      body * { visibility: hidden !important; }
+      #remito-print, #remito-print * { visibility: visible !important; }
+      #remito-print {
+        position: fixed !important; inset: 0 !important;
+        background: white !important; padding: 32px 40px !important;
+        font-family: 'Segoe UI', Arial, sans-serif !important;
+        color: #111 !important; z-index: 99999 !important;
+        overflow: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="initial-loader" style="min-height:100vh;background:#eef0f4;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:sans-serif;">
+      <div style="font-size:40px">✨</div>
+      <div style="font-size:18px;font-weight:700;color:#1e293b">GaDigital</div>
+      <div style="font-size:13px;color:#64748b">Cargando...</div>
+    </div>
+  </div>
+  <script>
+    // Remove loader when React takes over
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const loader = document.getElementById('initial-loader');
+        if (loader) loader.style.display = 'none';
+      }, 100);
+    });
+  </script>
+
+  <!-- Firebase SDK compat (works with Babel standalone) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script>
+    // Pre-initialize Firebase before React loads
+    window._fbConfig = {
+      apiKey: "AIzaSyAYqEGv6dQPAQVdHYJh2ug3HLqL1TDOClc",
+      authDomain: "gadigital-a51cc.firebaseapp.com",
+      databaseURL: "https://gadigital-a51cc-default-rtdb.firebaseio.com",
+      projectId: "gadigital-a51cc",
+      storageBucket: "gadigital-a51cc.firebasestorage.app",
+      messagingSenderId: "326069780447",
+      appId: "1:326069780447:web:044c60a18122090113ce6a"
+    };
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(window._fbConfig);
+      window._db = firebase.database();
+      console.log("Firebase pre-initialized ✓");
+    } catch(e) { console.error("Firebase pre-init failed:", e); }
+  </script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react" data-plugins="">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ─── HELPERS ────────────────────────────────────────────────────────────────
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+    const ars = n => new Intl.NumberFormat("es-AR", { style:"currency", currency:"ARS", maximumFractionDigits:0 }).format(n||0);
+    const today = () => new Date().toLocaleDateString("es-AR");
+
+    // ─── FIREBASE CONFIG (hardcodeado) ──────────────────────────────────────────
+    const FIREBASE_CFG = {
+      apiKey: "AIzaSyAYqEGv6dQPAQVdHYJh2ug3HLqL1TDOClc",
+      authDomain: "gadigital-a51cc.firebaseapp.com",
+      databaseURL: "https://gadigital-a51cc-default-rtdb.firebaseio.com",
+      projectId: "gadigital-a51cc",
+      storageBucket: "gadigital-a51cc.firebasestorage.app",
+      messagingSenderId: "326069780447",
+      appId: "1:326069780447:web:044c60a18122090113ce6a"
+    };
+    const AUTH_KEY = "gadigital_authed_v2";
+    const PW_KEY   = "gadigital_pwhash_v2";
+    const loadCfg = () => FIREBASE_CFG;
+    const saveCfg = () => {};
+    const loadAuthed = () => { try { return localStorage.getItem(AUTH_KEY) === "1"; } catch { return false; } };
+    const saveAuthed = () => { try { localStorage.setItem(AUTH_KEY, "1"); } catch {} };
+    const clearAuthed = () => { try { localStorage.removeItem(AUTH_KEY); localStorage.removeItem(PW_KEY); } catch {} };
+    const loadPwHash = () => { try { return localStorage.getItem(PW_KEY)||null; } catch { return null; } };
+    const savePwHash = h => { try { localStorage.setItem(PW_KEY, h); } catch {} };
+
+    // Simple hash function for password comparison
+    const hashPassword = async (password) => {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(password + "usaimports_salt_2024");
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    };
+
+    // ─── FIREBASE DB HELPERS ─────────────────────────────────────────────────────
+    let _db = window._db || null; // use pre-initialized if available
+    const initDb = cfg => {
+      try {
+        if (window._db) { _db = window._db; return _db; }
+        const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
+        _db = firebase.database(app);
+        window._db = _db;
+        return _db;
+      } catch(e) { console.error("Firebase init error:", e); return null; }
+    };
+    const dbSave = (data) => {
+      if (!_db) return;
+      _db.ref("gadigital/appdata").set(data);
+    };
+    const dbListen = (cb) => {
+      if (!_db) return () => {};
+      const ref = _db.ref("gadigital/appdata");
+      ref.on("value", snap => {
+        const val = snap.val();
+        cb(val && val.clients ? val : { clients:[], orders:[], viajes:[], catalogo:[] });
+      });
+      return () => ref.off("value");
+    };
+
+    // ─── SETUP PASSWORD SCREEN ────────────────────────────────────────────────────
+    function SetupPasswordScreen({ onDone }) {
+      const [password, setPassword] = useState("");
+      const [password2, setPassword2] = useState("");
+      const [error, setError] = useState("");
+      const [loading, setLoading] = useState(false);
+
+      const trySetup = async () => {
+        if (!password) { setError("Elegí una contraseña"); return; }
+        if (password.length < 4) { setError("Mínimo 4 caracteres"); return; }
+        if (password !== password2) { setError("Las contraseñas no coinciden"); return; }
+        setLoading(true);
+        const hash = await hashPassword(password);
+        onDone(hash);
+      };
+
+      const i2 = { width:"100%", background:"#e8eaf0", border:"1.5px solid rgba(255,255,255,0.1)", borderRadius:12, padding:"13px 16px", color:"#0f172a", fontFamily:"'Sora',sans-serif", fontSize:14, outline:"none", boxSizing:"border-box", marginBottom:12, textAlign:"center", letterSpacing:3 };
+      return (
+        <div>
+          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Contraseña" style={i2} autoFocus/>
+          <input type="password" value={password2} onChange={e=>setPassword2(e.target.value)} placeholder="Repetir contraseña" style={i2} onKeyDown={e=>e.key==="Enter"&&trySetup()}/>
+          {error && <div style={{fontFamily:"'Sora',sans-serif",fontSize:12,color:"#f87171",marginBottom:12}}>{error}</div>}
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:12,color:"#374151",marginBottom:16}}>
+            Esta contraseña la van a usar vos y tu socia para entrar desde cualquier dispositivo.
+          </div>
+          <button onClick={trySetup} disabled={loading} style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#a855f7,#7c3aed)",border:"none",borderRadius:12,fontFamily:"'Sora',sans-serif",fontSize:14,fontWeight:700,color:"#fff",cursor:"pointer",opacity:loading?0.6:1}}>
+            {loading?"Configurando...":"✓ Crear contraseña y entrar"}
+          </button>
+        </div>
+      );
+    }
+
+    // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
+    function LoginScreen({ onLogin }) {
+      const [password, setPassword] = useState("");
+      const [error, setError] = useState("");
+      const [loading, setLoading] = useState(false);
+
+      const tryLogin = async () => {
+        if (!password) { setError("Ingresá la contraseña"); return; }
+        setLoading(true); setError("");
+        const storedHash = loadPwHash();
+        const hash = await hashPassword(password);
+        if (hash === storedHash) {
+          saveAuthed();
+          onLogin(hash);
+        } else {
+          setError("Contraseña incorrecta");
+          setLoading(false);
+        }
+      };
+
+      const s = { fontFamily:"'Sora',sans-serif" };
+      return (
+        <div style={{minHeight:"100vh", background:"#eef0f4", display:"flex", alignItems:"center", justifyContent:"center", padding:20}}>
+          <div style={{width:"100%", maxWidth:380, textAlign:"center"}}>
+            <div style={{fontSize:44, marginBottom:16}}>🔐</div>
+            <div style={{...s, fontSize:22, fontWeight:800, color:"#0f172a", marginBottom:6}}>USA Imports</div>
+            <div style={{...s, fontSize:13, color:"#374151", marginBottom:32}}>Ingresá tu contraseña para continuar</div>
+            <input
+              type="password" value={password}
+              onChange={e=>setPassword(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&tryLogin()}
+              placeholder="Contraseña"
+              autoFocus
+              style={{width:"100%", background:"#e8eaf0", border:"1.5px solid rgba(255,255,255,0.1)", borderRadius:12, padding:"13px 16px", color:"#0f172a", fontFamily:"'Sora',sans-serif", fontSize:14, outline:"none", boxSizing:"border-box", marginBottom:12, textAlign:"center", letterSpacing:4}}
+            />
+            {error && <div style={{...s, fontSize:12, color:"#f87171", marginBottom:12}}>{error}</div>}
+            <button onClick={tryLogin} disabled={loading} style={{width:"100%", padding:"13px", background:"linear-gradient(135deg,#3b82f6,#2563eb)", border:"none", borderRadius:12, ...s, fontSize:14, fontWeight:700, color:"#fff", cursor:"pointer", opacity:loading?0.6:1}}>
+              {loading ? "Verificando..." : "Entrar →"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── SETUP SCREEN ────────────────────────────────────────────────────────────
+    function SetupScreen({ onConnect, asModal=false, onClose }) {
+      const [cfg, setCfg] = useState({
+        apiKey:"", authDomain:"", databaseURL:"", projectId:"", storageBucket:"", messagingSenderId:"", appId:""
+      });
+      const [password, setPassword] = useState("");
+      const [password2, setPassword2] = useState("");
+      const [error, setError] = useState("");
+      const [loading, setLoading] = useState(false);
+
+      const fields = [
+        ["apiKey","API Key"],["authDomain","Auth Domain"],["databaseURL","Database URL ⚠️"],
+        ["projectId","Project ID"],["storageBucket","Storage Bucket"],
+        ["messagingSenderId","Messaging Sender ID"],["appId","App ID"]
+      ];
+
+      const tryConnect = async () => {
+        if (!cfg.apiKey || !cfg.databaseURL || !cfg.projectId) { setError("Completá al menos: API Key, Database URL y Project ID"); return; }
+        if (!password) { setError("Elegí una contraseña para proteger tu app"); return; }
+        if (password !== password2) { setError("Las contraseñas no coinciden"); return; }
+        if (password.length < 4) { setError("La contraseña debe tener al menos 4 caracteres"); return; }
+        setLoading(true); setError("");
+        try {
+          // Wait for Firebase modules to be available
+          await new Promise((resolve, reject) => {
+            let attempts = 0;
+            const check = () => {
+              if (window._firebaseModules?.initializeApp) { resolve(); return; }
+              if (attempts++ > 40) { reject(new Error("Firebase no cargó. Revisá tu conexión a internet.")); return; }
+              setTimeout(check, 200);
+            };
+            check();
+          });
+          const pwHash = await hashPassword(password);
+          initDb(cfg);
+          saveCfg({...cfg, pwHash});
+          saveAuthed();
+          onConnect(pwHash);
+        } catch(e) { setError("Error al conectar: " + e.message); setLoading(false); }
+      };
+
+      const pasteJson = (text) => {
+        try {
+          const cleaned = text.replace(/.*?({[\s\S]*})/m, '$1');
+          const parsed = JSON.parse(cleaned);
+          const mapped = {
+            apiKey: parsed.apiKey||"", authDomain: parsed.authDomain||"",
+            databaseURL: parsed.databaseURL||"", projectId: parsed.projectId||"",
+            storageBucket: parsed.storageBucket||"", messagingSenderId: parsed.messagingSenderId||"",
+            appId: parsed.appId||""
+          };
+          setCfg(mapped);
+        } catch { /* not JSON, ignore */ }
+      };
+
+      const s = { fontFamily:"'Sora',sans-serif" };
+      const inp2 = { width:"100%", background:"#e8eaf0", border:"1.5px solid rgba(255,255,255,0.1)", borderRadius:10, padding:"10px 13px", color:"#0f172a", fontFamily:"'Sora',sans-serif", fontSize:12, outline:"none", boxSizing:"border-box" };
+
+      const inner = (
+        <div style={{width:"100%", maxWidth:520}}>
+          <div style={{textAlign:"center", marginBottom:32}}>
+            <div style={{fontSize:40, marginBottom:12}}>🔥</div>
+            <div style={{...s, fontSize:24, fontWeight:800, color:"#0f172a", marginBottom:6}}>Conectar a Firebase</div>
+            <div style={{...s, fontSize:13, color:"#374151", lineHeight:1.6}}>
+              Para sincronizar datos entre dispositivos necesitás conectar tu base de datos de Firebase.
+            </div>
+          </div>
+
+            {/* Steps */}
+            <div style={{background:"rgba(59,130,246,0.08)", border:"1px solid rgba(59,130,246,0.2)", borderRadius:14, padding:20, marginBottom:24}}>
+              <div style={{...s, fontSize:12, fontWeight:700, color:"#60a5fa", marginBottom:12, textTransform:"uppercase", letterSpacing:0.8}}>📋 Pasos para obtener tu configuración</div>
+              {[
+                ["1","Entrá a", "console.firebase.google.com", "https://console.firebase.google.com"],
+                ["2","Creá un proyecto nuevo (o usá uno existente)","",""],
+                ["3","En el proyecto → Realtime Database → Crear base de datos → elegí cualquier región → Modo de prueba","",""],
+                ["4","Volvé al inicio del proyecto → ícono </> (Web) → Registrar app → copiá el objeto firebaseConfig","",""],
+              ].map(([n, text, link, href])=>(
+                <div key={n} style={{display:"flex", gap:10, marginBottom:10, alignItems:"flex-start"}}>
+                  <div style={{width:22, height:22, borderRadius:"50%", background:"rgba(59,130,246,0.25)", color:"#60a5fa", display:"flex", alignItems:"center", justifyContent:"center", ...s, fontSize:11, fontWeight:800, flexShrink:0, marginTop:1}}>{n}</div>
+                  <div style={{...s, fontSize:12, color:"#374151", lineHeight:1.5}}>
+                    {text} {link && <a href={href} target="_blank" style={{color:"#60a5fa"}}>{link}</a>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Paste area */}
+            <div style={{marginBottom:16}}>
+              <label style={{...s, fontSize:11, color:"#374151", letterSpacing:0.8, textTransform:"uppercase", marginBottom:6, display:"block", fontWeight:600}}>
+                Pegá el objeto firebaseConfig completo aquí (o completá campo por campo abajo)
+              </label>
+              <textarea
+                rows={4}
+                placeholder={'{\n  apiKey: "AIza...",\n  databaseURL: "https://tu-proyecto-default-rtdb.firebaseio.com",\n  projectId: "tu-proyecto",\n  ...\n}'}
+                onChange={e => pasteJson(e.target.value)}
+                style={{...inp2, resize:"vertical", fontSize:11, fontFamily:"monospace", color:"#a5f3fc"}}
+              />
+            </div>
+
+            {/* Individual fields */}
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20}}>
+              {fields.map(([key, label])=>(
+                <div key={key} style={key==="databaseURL"?{gridColumn:"1/-1"}:{}}>
+                  <label style={{...s, fontSize:10, color:"#374151", letterSpacing:0.8, textTransform:"uppercase", marginBottom:4, display:"block", fontWeight:600}}>{label}</label>
+                  <input style={{...inp2, borderColor: key==="databaseURL"?"rgba(251,191,36,0.4)":"rgba(255,255,255,0.1)"}}
+                    value={cfg[key]} onChange={e=>setCfg(p=>({...p,[key]:e.target.value}))}
+                    placeholder={key==="databaseURL"?"https://mi-proyecto-default-rtdb.firebaseio.com":""}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {error && <div style={{...s, fontSize:12, color:"#f87171", background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:10, padding:"10px 14px", marginBottom:16}}>{error}</div>}
+
+            {/* Password section */}
+            <div style={{background:"rgba(34,197,94,0.06)", border:"1px solid rgba(34,197,94,0.2)", borderRadius:14, padding:16, marginBottom:16}}>
+              <div style={{...s, fontSize:12, fontWeight:700, color:"#4ade80", marginBottom:12, textTransform:"uppercase", letterSpacing:0.8}}>🔒 Elegí una contraseña para tu app</div>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                <div>
+                  <label style={{...s, fontSize:10, color:"#374151", letterSpacing:0.8, textTransform:"uppercase", marginBottom:4, display:"block", fontWeight:600}}>Contraseña</label>
+                  <input type="password" style={inp2} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Mínimo 4 caracteres"/>
+                </div>
+                <div>
+                  <label style={{...s, fontSize:10, color:"#374151", letterSpacing:0.8, textTransform:"uppercase", marginBottom:4, display:"block", fontWeight:600}}>Repetir contraseña</label>
+                  <input type="password" style={inp2} value={password2} onChange={e=>setPassword2(e.target.value)} placeholder="Repetir"/>
+                </div>
+              </div>
+              <div style={{...s, fontSize:11, color:"#374151", marginTop:8}}>
+                Esta contraseña la van a necesitar vos y tu socia cada vez que abran la app en un dispositivo nuevo.
+              </div>
+            </div>
+
+            <button onClick={tryConnect} disabled={loading} style={{width:"100%", padding:"14px", background:"linear-gradient(135deg,#f59e0b,#d97706)", border:"none", borderRadius:12, ...s, fontSize:14, fontWeight:800, color:"#1c1917", cursor:"pointer", opacity:loading?0.6:1}}>
+              {loading ? "Conectando..." : "🔗 Conectar y guardar configuración"}
+            </button>
+
+            <div style={{...s, fontSize:11, color:"#374151", textAlign:"center", marginTop:12, lineHeight:1.5}}>
+              La configuración se guarda en este navegador. La próxima vez que abras el archivo, se conectará automáticamente.
+            </div>
+          </div>
+        );
+
+      if (asModal) return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(4px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+          <div style={{background:"#f5f6f9",border:"1px solid #d4d8e2",borderRadius:22,padding:28,width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(0,0,0,0.7)",position:"relative"}}>
+            <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,0.07)",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",color:"#374151",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>✕</button>
+            {inner}
+          </div>
+        </div>
+      );
+
+      return (
+        <div style={{minHeight:"100vh", background:"#eef0f4", display:"flex", alignItems:"center", justifyContent:"center", padding:20}}>
+          {inner}
+        </div>
+      );
+    }
+
+    // ─── ICONS ──────────────────────────────────────────────────────────────────
+    const Icon = ({ name, size=16 }) => {
+      const icons = {
+        plus:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+        trash:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/></svg>,
+        edit:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11,4H4a2,2,0,0,0-2,2v14a2,2,0,0,0,2,2H18a2,2,0,0,0,2-2v-7"/><path d="M18.5,2.5a2.121,2.121,0,0,1,3,3L12,15l-4,1,1-4Z"/></svg>,
+        check:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20,6 9,17 4,12"/></svg>,
+        x:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+        user:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20,21v-2a4,4,0,0,0-4-4H8a4,4,0,0,0-4,4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+        bag:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6,2L3,6v14a2,2,0,0,0,2,2H19a2,2,0,0,0,2-2V6L18,2Z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16,10a4,4,0,0,1-8,0"/></svg>,
+        back:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15,18 9,12 15,6"/></svg>,
+        search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+        dollar: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17,5H9.5a3.5,3.5,0,0,0,0,7h5a3.5,3.5,0,0,1,0,7H6"/></svg>,
+        print:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6,18H4a2,2,0,0,1-2-2V11a2,2,0,0,1,2-2H20a2,2,0,0,1,2,2v5a2,2,0,0,1-2,2H18"/><rect x="6" y="14" width="12" height="8"/></svg>,
+        image:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>,
+        link:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10,13a5,5,0,0,0,7.54.54l3-3a5,5,0,0,0-7.07-7.07l-1.72,1.71"/><path d="M14,11a5,5,0,0,0-7.54-.54l-3,3a5,5,0,0,0,7.07,7.07l1.71-1.71"/></svg>,
+      };
+      return icons[name] || null;
+    };
+
+    // ─── SHARED STYLES ───────────────────────────────────────────────────────────
+    const inp = { width:"100%", background:"#e8eaf0", border:"1.5px solid rgba(255,255,255,0.1)", borderRadius:10, padding:"11px 13px", color:"#0f172a", fontFamily:"'Sora',sans-serif", fontSize:13, outline:"none", boxSizing:"border-box" };
+    const lbl = { fontFamily:"'Sora',sans-serif", fontSize:11, color:"#374151", letterSpacing:0.9, textTransform:"uppercase", marginBottom:5, display:"block", fontWeight:600 };
+
+    const Btn = ({ onClick, children, variant="primary", small=false, disabled=false, style:sx={} }) => {
+      const v = {
+        primary:{ background:"linear-gradient(135deg,#3b82f6,#2563eb)", color:"#fff", border:"none" },
+        ghost:  { background:"#e8eaf0", color:"#374151", border:"1px solid #d4d8e2" },
+        danger: { background:"rgba(239,68,68,0.12)", color:"#f87171", border:"1px solid rgba(239,68,68,0.2)" },
+        success:{ background:"rgba(34,197,94,0.15)", color:"#4ade80", border:"1px solid rgba(34,197,94,0.25)" },
+        amber:  { background:"linear-gradient(135deg,#f59e0b,#d97706)", color:"#1c1917", border:"none" },
+        teal:   { background:"linear-gradient(135deg,#0d9488,#0f766e)", color:"#fff", border:"none" },
+      };
+      return <button onClick={onClick} disabled={disabled} style={{...v[variant], borderRadius:10, padding:small?"7px 14px":"11px 20px", fontFamily:"'Sora',sans-serif", fontSize:small?12:13, fontWeight:700, cursor:disabled?"default":"pointer", opacity:disabled?0.4:1, display:"inline-flex", alignItems:"center", gap:6, transition:"opacity .15s", ...sx}}>{children}</button>;
+    };
+
+    const StatCard = ({ label, value, color="#3b82f6", icon }) => (
+      <div style={{background:"#f5f6f9", borderRadius:12, padding:"12px 14px", border:`1px solid ${color}22`}}>
+        <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:5}}>
+          <div style={{width:22, height:22, borderRadius:6, background:`${color}22`, display:"flex", alignItems:"center", justifyContent:"center", color}}>{icon}</div>
+          <span style={{fontFamily:"'Sora',sans-serif", fontSize:9, color:"#374151", letterSpacing:1, textTransform:"uppercase", fontWeight:600}}>{label}</span>
+        </div>
+        <div style={{fontFamily:"'Sora',sans-serif", fontSize:16, color, fontWeight:800, lineHeight:1.2}}>{value}</div>
+      </div>
+    );
+
+    // ─── TOAST ───────────────────────────────────────────────────────────────────
+    function Toast({ msg, type="ok", onClose }) {
+      useEffect(() => { const t = setTimeout(onClose, 2800); return () => clearTimeout(t); }, []);
+      return (
+        <div style={{position:"fixed", bottom:24, left:"50%", transform:"translateX(-50%)", background:type==="ok"?"#166534":"#7f1d1d", border:`1px solid ${type==="ok"?"#16a34a":"#dc2626"}`, color:"#fff", padding:"11px 22px", borderRadius:40, fontFamily:"'Sora',sans-serif", fontSize:13, fontWeight:600, boxShadow:"0 8px 28px rgba(0,0,0,0.5)", zIndex:9999, whiteSpace:"nowrap"}}>
+          {msg}
+        </div>
+      );
+    }
+
+    // ─── MODAL ───────────────────────────────────────────────────────────────────
+    function Modal({ title, onClose, children, wide=false }) {
+      return (
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", backdropFilter:"blur(4px)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20}} onClick={e => e.target===e.currentTarget && onClose()}>
+          <div style={{background:"#f5f6f9", border:"1px solid #d4d8e2", borderRadius:22, padding:28, width:"100%", maxWidth:wide?580:460, maxHeight:"88vh", overflowY:"auto", boxShadow:"0 24px 60px rgba(0,0,0,0.6)"}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:22}}>
+              <h3 style={{fontFamily:"'Sora',sans-serif", fontSize:18, color:"#0f172a", margin:0, fontWeight:700}}>{title}</h3>
+              <button onClick={onClose} style={{background:"rgba(255,255,255,0.07)", border:"none", borderRadius:8, width:32, height:32, cursor:"pointer", color:"#374151", display:"flex", alignItems:"center", justifyContent:"center"}}><Icon name="x" size={15}/></button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── REMITO MODAL ────────────────────────────────────────────────────────────
+    function RemitoModal({ client, orders, onClose }) {
+      const [soloLlegados, setSoloLlegados] = useState(false);
+      const fmt    = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
+      const fmtUSD = n => `U$D ${parseFloat(n||0).toLocaleString("es-AR",{minimumFractionDigits:0,maximumFractionDigits:0})}`;
+      const clientOrders = orders.filter(o => o.clientId === client.id && o.status !== "cancelado");
+      const allItems = clientOrders.flatMap(o => o.items.map(i=>({...i, date:o.date, status:o.status})));
+      const filteredItems = soloLlegados ? allItems.filter(i => i.llegado || i.mostrarRemito) : allItems;
+
+      // Separate ARS and USD items
+      const itemsARS = filteredItems.filter(i => i.priceUSD == null);
+      const itemsUSD = filteredItems.filter(i => i.priceUSD != null);
+      const hasARS   = itemsARS.length > 0;
+      const hasUSD   = itemsUSD.length > 0;
+      const hasMixed = hasARS && hasUSD;
+
+      // ARS totals (items priced in ARS)
+      const totalPedidoARS  = itemsARS.reduce((a,i)=>a+i.price,0);
+      const totalReservaARS = itemsARS.reduce((a,i)=>a+i.reserva,0);
+      const totalSaldoARS   = itemsARS.reduce((a,i)=>a+(i.pagado?0:i.price-i.reserva),0);
+
+      // USD totals (items priced in USD)
+      const totalPedidoUSD  = itemsUSD.reduce((a,i)=>a+(i.priceUSD||0),0);
+      const totalReservaUSD = itemsUSD.reduce((a,i)=>a+(i.reservaUSD!=null?i.reservaUSD:i.reserva/ARS_TO_USD),0);
+      const totalSaldoUSD   = itemsUSD.reduce((a,i)=>a+(i.pagado?0:(i.priceUSD||0)-(i.reservaUSD!=null?i.reservaUSD:i.reserva/ARS_TO_USD)),0);
+
+      // Legacy totals for single-currency (all ARS)
+      const totalPedido  = filteredItems.reduce((a,i)=>a+i.price,0);
+      const totalReserva = filteredItems.reduce((a,i)=>a+i.reserva,0);
+      const totalSaldo   = filteredItems.reduce((a,i)=>a+(i.pagado?0:i.price-i.reserva),0);
+
+      return (
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", backdropFilter:"blur(6px)", zIndex:600, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px", overflowY:"auto"}}>
+          <div id="remito-print" style={{background:"#fff", borderRadius:16, padding:"32px 36px", width:"100%", maxWidth:720, color:"#111", fontFamily:"'Segoe UI',Arial,sans-serif", fontSize:13, boxShadow:"0 32px 80px rgba(0,0,0,0.5)"}}>
+
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24, paddingBottom:16, borderBottom:"2px solid #1d4ed8"}}>
+              <div>
+                <div style={{fontSize:24, fontWeight:800, color:"#1d4ed8", letterSpacing:"-0.5px"}}>Ga<span style={{color:"#a855f7"}}>Digital</span></div>
+                <div style={{fontSize:11, color:"#6b7280", letterSpacing:1, textTransform:"uppercase", marginTop:3}}>Remito de compra</div>
+              </div>
+              <div style={{textAlign:"right", fontSize:12, color:"#6b7280"}}>
+                <div style={{fontWeight:700, color:"#111", marginBottom:2}}>Fecha: {today()}</div>
+                <div>Pedidos: {clientOrders.length} · Productos: {allItems.length}</div>
+              </div>
+            </div>
+
+            <div style={{background:"#eef0f4", border:"1px solid #d4d8e2", borderRadius:8, padding:"14px 18px", marginBottom:16}}>
+              <div style={{fontSize:18, fontWeight:800, color:"#111", marginBottom:4}}>{client.name}</div>
+              <div style={{fontSize:12, color:"#6b7280"}}>
+                {[client.phone?"📱 "+client.phone:"", client.note||""].filter(Boolean).join("  ·  ")}
+              </div>
+            </div>
+
+            {/* Filter toggle */}
+            <div style={{display:"flex", gap:4, marginBottom:20, background:"#e2e8f0", borderRadius:10, padding:4}}>
+              {[["📋 Todos los productos", false],["✈️ Llegaron + en remito", true]].map(([label,val])=>(
+                <button key={String(val)} onClick={()=>setSoloLlegados(val)} style={{
+                  flex:1, padding:"8px 10px", borderRadius:7, border:"none", cursor:"pointer",
+                  background: soloLlegados===val ? "#1d4ed8" : "transparent",
+                  color: soloLlegados===val ? "#fff" : "#6b7280",
+                  fontFamily:"'Sora',sans-serif", fontSize:12, fontWeight:600, transition:"all .15s"
+                }}>{label}</button>
+              ))}
+            </div>
+
+            {filteredItems.length === 0 ? (
+              <div style={{textAlign:"center", padding:"30px", color:"#9ca3af", fontSize:14}}>
+                {soloLlegados ? "Ningún producto marcado como llegado o para mostrar en remito." : "Sin productos para mostrar."}
+              </div>
+            ) : (
+              <table style={{width:"100%", borderCollapse:"collapse", marginBottom:22}}>
+                <thead>
+                  <tr>
+                    {["Producto","Fecha","Precio","Reserva","Saldo","Estado"].map((h,i)=>(
+                      <th key={h} style={{background:"#1d4ed8", color:"#fff", padding:"9px 10px", fontSize:11, textAlign:i>=2?"right":i===5?"center":"left", letterSpacing:0.5, textTransform:"uppercase"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredItems.map((item,idx)=>(
+                    <tr key={item.id} style={{background:idx%2===1?"#f8fafc":"#fff"}}>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:12}}>
+                        <div>{item.desc}{item.llegado&&<span style={{marginLeft:6,fontSize:10,color:"#d97706",fontWeight:700}}>✈️</span>}</div>
+                        {item.mostrarRemito && !item.llegado && (
+                          <div style={{fontSize:10, color:"#7c3aed", fontWeight:600, marginTop:2}}>⏳ Aún no llegó a Argentina</div>
+                        )}
+                      </td>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:12, color:"#6b7280"}}>{item.date}</td>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:12, textAlign:"right"}}>
+                        {item.priceUSD!=null ? <span>{fmtUSD(item.priceUSD)}<span style={{display:"block",fontSize:10,color:"#9ca3af"}}>{fmt(item.price)}</span></span> : fmt(item.price)}
+                      </td>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:12, textAlign:"right", color:"#16a34a", fontWeight:600}}>
+                        {item.reservaUSD!=null ? <span>{fmtUSD(item.reservaUSD)}<span style={{display:"block",fontSize:10,color:"#9ca3af"}}>{fmt(item.reserva)}</span></span> : fmt(item.reserva)}
+                      </td>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:12, textAlign:"right", color:item.pagado?"#16a34a":"#dc2626", fontWeight:700}}>
+                        {item.pagado ? "✓ PAGADO" : item.priceUSD!=null
+                          ? <span>{fmtUSD((item.priceUSD||0)-(item.reservaUSD!=null?item.reservaUSD:item.reserva/ARS_TO_USD))}<span style={{display:"block",fontSize:10,color:"#9ca3af"}}>{fmt(item.price-item.reserva)}</span></span>
+                          : fmt(item.price - item.reserva)}
+                      </td>
+                      <td style={{padding:"9px 10px", borderBottom:"1px solid #f1f5f9", fontSize:11, textAlign:"center", color:item.pagado?"#16a34a":item.llegado?"#d97706":item.mostrarRemito?"#7c3aed":"#6b7280", fontWeight:600}}>
+                        {item.pagado?"Pagado":item.llegado?"Llegó":item.mostrarRemito?"Sin llegar":"Pend."}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {/* Totals — dual currency if mixed, single otherwise */}
+            <div style={{marginBottom:24}}>
+              {/* USD totals */}
+              {hasUSD && (
+                <div style={{background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:8, padding:"14px 18px", marginBottom:hasARS?10:0}}>
+                  <div style={{fontSize:10, fontWeight:700, color:"#15803d", letterSpacing:1, textTransform:"uppercase", marginBottom:10}}>
+                    💵 Totales en dólares
+                  </div>
+                  <div style={{display:"flex", justifyContent:"flex-end", gap:32}}>
+                    {[["Total pedido", fmtUSD(totalPedidoUSD), "#1d4ed8"],
+                      ["Total reservado", fmtUSD(totalReservaUSD), "#16a34a"],
+                      ["Saldo a pagar", totalSaldoUSD<=0?"✓ AL DÍA":fmtUSD(totalSaldoUSD), totalSaldoUSD>0?"#dc2626":"#16a34a"]
+                    ].map(([label,val,color])=>(
+                      <div key={label} style={{textAlign:"right"}}>
+                        <div style={{fontSize:10, textTransform:"uppercase", letterSpacing:0.8, color:"#6b7280", marginBottom:4}}>{label}</div>
+                        <div style={{fontSize:17, fontWeight:800, color}}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* ARS totals */}
+              {hasARS && (
+                <div style={{background:"#eff6ff", border:"1px solid #bfdbfe", borderRadius:8, padding:"14px 18px"}}>
+                  <div style={{fontSize:10, fontWeight:700, color:"#1d4ed8", letterSpacing:1, textTransform:"uppercase", marginBottom:10}}>
+                    🇦🇷 Totales en pesos
+                  </div>
+                  <div style={{display:"flex", justifyContent:"flex-end", gap:32}}>
+                    {[["Total pedido", fmt(totalPedidoARS), "#1d4ed8"],
+                      ["Total reservado", fmt(totalReservaARS), "#16a34a"],
+                      ["Saldo a pagar", totalSaldoARS<=0?"✓ AL DÍA":fmt(totalSaldoARS), totalSaldoARS>0?"#dc2626":"#16a34a"]
+                    ].map(([label,val,color])=>(
+                      <div key={label} style={{textAlign:"right"}}>
+                        <div style={{fontSize:10, textTransform:"uppercase", letterSpacing:0.8, color:"#6b7280", marginBottom:4}}>{label}</div>
+                        <div style={{fontSize:17, fontWeight:800, color}}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{borderTop:"1px solid #e2e8f0", paddingTop:14, fontSize:11, color:"#9ca3af", display:"flex", justifyContent:"space-between", marginBottom:24}}>
+              <span>GaDigital · Productos importados de EE.UU.</span>
+              <span>Generado: {new Date().toLocaleString("es-AR")}</span>
+            </div>
+
+            <div style={{display:"flex", gap:10, justifyContent:"flex-end"}}>
+              <button onClick={onClose} style={{padding:"10px 20px", background:"#e8eaf0", border:"1px solid #d4d8e2", borderRadius:10, fontFamily:"'Sora',sans-serif", fontSize:13, fontWeight:600, color:"#6b7280", cursor:"pointer"}}>
+                Cerrar
+              </button>
+              <button onClick={()=>window.print()} style={{padding:"10px 24px", background:"linear-gradient(135deg,#1d4ed8,#1e40af)", border:"none", borderRadius:10, fontFamily:"'Sora',sans-serif", fontSize:13, fontWeight:700, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", gap:8}}>
+                🖨️ Imprimir / Guardar PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── NEW CLIENT MODAL ────────────────────────────────────────────────────────
+    function NewClientModal({ onSave, onClose, existing }) {
+      const [name,setName]       = useState(existing?.name||"");
+      const [phone,setPhone]     = useState(existing?.phone||"");
+      const [address,setAddress] = useState(existing?.address||"");
+      const [note,setNote]       = useState(existing?.note||"");
+      const ok = name.trim().length > 0;
+      return (
+        <Modal title={existing?"Editar clienta":"Nueva clienta"} onClose={onClose}>
+          <div style={{marginBottom:14}}><label style={lbl}>Nombre *</label><input style={inp} value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: María García" autoFocus/></div>
+          <div style={{marginBottom:14}}><label style={lbl}>WhatsApp <span style={{color:"#94a3b8",fontWeight:400,fontSize:10,textTransform:"none",letterSpacing:0}}>(con código de país, sin espacios)</span></label><input style={inp} value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Ej: 5491155551234"/></div>
+          <div style={{marginBottom:14}}><label style={lbl}>Dirección</label><input style={inp} value={address} onChange={e=>setAddress(e.target.value)} placeholder="Ej: Av. Corrientes 1234, CABA"/></div>
+          <div style={{marginBottom:22}}><label style={lbl}>Nota interna</label><input style={inp} value={note} onChange={e=>setNote(e.target.value)} placeholder="Ej: paga siempre a tiempo"/></div>
+          <div style={{display:"flex", gap:10}}>
+            <Btn variant="ghost" onClick={onClose} style={{flex:1, justifyContent:"center"}}>Cancelar</Btn>
+            <Btn variant="primary" disabled={!ok} onClick={()=>ok&&onSave({name:name.trim(),phone,address,note})} style={{flex:2, justifyContent:"center"}}>
+              <Icon name="check" size={14}/>{existing?"Guardar cambios":"Crear clienta"}
+            </Btn>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ─── NEW ORDER MODAL ─────────────────────────────────────────────────────────
+    function NewOrderModal({ clientName, onSave, onClose, catalogo=[] }) {
+      const [desc,setDesc] = useState("");
+      const [price,setPrice] = useState("");
+      const [priceUSD,setPriceUSD] = useState(false);
+      const [reserva,setReserva] = useState("");
+      const [reservaUSD,setReservaUSD] = useState(false);
+      const [photoUrl,setPhotoUrl] = useState("");
+      const [peso,setPeso] = useState("");
+      const [costo,setCosto] = useState("");
+      const [items,setItems] = useState([]);
+      const [showCatalog,setShowCatalog] = useState(false);
+      const descRef = useRef();
+
+      const pickFromCatalog = (prod) => {
+        setDesc(prod.name);
+        setPriceUSD(prod.priceUSD!=null);
+        setPrice(prod.priceUSD!=null ? prod.priceUSD : prod.price||"");
+        setCosto(prod.costo||"");
+        setPeso(prod.peso||"");
+        setPhotoUrl(prod.photoUrl||"");
+        setShowCatalog(false);
+        setTimeout(()=>descRef.current?.focus(), 100);
+      };
+
+      const addItem = () => {
+        if(!desc.trim()||!price) return;
+        const priceARS   = priceUSD   ? parseFloat(price)   * ARS_TO_USD : parseFloat(price);
+        const reservaVal = reserva ? (reservaUSD ? parseFloat(reserva) * ARS_TO_USD : parseFloat(reserva)) : 0;
+        const reservaUSDVal = reservaUSD && reserva ? parseFloat(reserva) : null;
+        setItems(p=>[...p,{
+          id:uid(), desc:desc.trim(),
+          price: priceARS,
+          priceUSD: priceUSD ? parseFloat(price) : null,
+          reserva: reservaVal,
+          reservaUSD: reservaUSDVal,
+          pagado:false, photoUrl:photoUrl.trim(),
+          peso:peso?parseFloat(peso):null,
+          costo:costo?parseFloat(costo):null
+        }]);
+        setDesc(""); setPrice(""); setReserva(""); setPhotoUrl(""); setPeso(""); setCosto("");
+        descRef.current?.focus();
+      };
+      const removeItem = id => setItems(p=>p.filter(i=>i.id!==id));
+      const tp = items.reduce((a,i)=>a+i.price,0);
+      const tr = items.reduce((a,i)=>a+i.reserva,0);
+
+      const CurrencyToggle = ({ isUSD, onToggle }) => (
+        <div style={{display:"flex", background:"#e8eaf0", borderRadius:8, padding:2, gap:2, flexShrink:0}}>
+          {[["ARS","$"],["USD","U$D"]].map(([cur,sym])=>(
+            <button key={cur} onClick={()=>onToggle(cur==="USD")} style={{
+              padding:"3px 10px", borderRadius:6, border:"none", cursor:"pointer",
+              background:(isUSD===(cur==="USD"))?(cur==="USD"?"#16a34a":"#2563eb"):"transparent",
+              color:(isUSD===(cur==="USD"))?"#fff":"#475569",
+              fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, transition:"all .15s"
+            }}>{sym} {cur}</button>
+          ))}
+        </div>
+      );
+
+      return (
+        <Modal title={`Nuevo pedido — ${clientName}`} onClose={onClose} wide>
+          <div style={{background:"#eef0f4", borderRadius:14, padding:16, marginBottom:16, border:"1px solid #d4d8e2"}}>
+            {/* Catalog picker */}
+            {catalogo.length>0 && (
+              <div style={{marginBottom:12}}>
+                <button onClick={()=>setShowCatalog(p=>!p)} style={{width:"100%",padding:"9px",background:"rgba(96,165,250,0.1)",border:"1px solid rgba(96,165,250,0.25)",borderRadius:10,fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:600,color:"#60a5fa",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                  🛍️ {showCatalog?"Ocultar catálogo":`Elegir del catálogo (${catalogo.length} productos)`}
+                </button>
+                {showCatalog&&(
+                  <div style={{marginTop:8,background:"rgba(0,0,0,0.3)",borderRadius:10,border:"1px solid rgba(96,165,250,0.15)",maxHeight:220,overflowY:"auto"}}>
+                    {catalogo.map(prod=>(
+                      <div key={prod.id} onClick={()=>pickFromCatalog(prod)}
+                        style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer",transition:"background .1s"}}
+                        onMouseEnter={e=>e.currentTarget.style.background="rgba(96,165,250,0.1)"}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        {prod.photoUrl&&<img src={prod.photoUrl.includes("gyazo.com")&&!prod.photoUrl.includes("i.gyazo")?`https://i.gyazo.com/${prod.photoUrl.split("/").pop()}.png`:prod.photoUrl} style={{width:36,height:36,borderRadius:6,objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color:"#0f172a",fontWeight:600,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prod.name}</div>
+                          <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,display:"flex",gap:10}}>
+                            <span>{prod.priceUSD!=null?`U$D ${prod.priceUSD}`:ars(prod.price||0)}</span>
+                            {prod.costo&&<span style={{color:"#fb923c"}}>Costo: U$D {prod.costo}</span>}
+                            {prod.peso&&<span style={{color:"#60a5fa"}}>{prod.peso}kg</span>}
+                          </div>
+                        </div>
+                        <span style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#60a5fa",fontWeight:600,flexShrink:0}}>Usar →</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{marginBottom:10}}>
+              <label style={lbl}>Descripción del producto</label>
+              <input ref={descRef} style={inp} value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Ej: Remera Nike blanca talle M" onKeyDown={e=>e.key==="Enter"&&addItem()}/>
+            </div>
+            <div style={{marginBottom:10}}>
+              <label style={lbl}>Link de la foto <span style={{color:"#374151", fontWeight:400, textTransform:"none", letterSpacing:0, fontSize:10}}>(opcional)</span></label>
+              <div style={{position:"relative"}}>
+                <div style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", color:"#374151", pointerEvents:"none"}}><Icon name="link" size={13}/></div>
+                <input style={{...inp, paddingLeft:32}} value={photoUrl} onChange={e=>setPhotoUrl(e.target.value)} placeholder="https://drive.google.com/... o cualquier link de foto"/>
+              </div>
+            </div>
+
+            {/* Precio */}
+            <div style={{marginBottom:10}}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5}}>
+                <label style={{...lbl, marginBottom:0}}>Precio venta</label>
+                <CurrencyToggle isUSD={priceUSD} onToggle={setPriceUSD}/>
+              </div>
+              <div style={{position:"relative"}}>
+                <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,pointerEvents:"none"}}>
+                  {priceUSD?"U$D":"$"}
+                </div>
+                <input style={{...inp, paddingLeft:36}} type="number" value={price} onChange={e=>setPrice(e.target.value)} placeholder={priceUSD?"0.00":"80000"} onKeyDown={e=>e.key==="Enter"&&addItem()}/>
+              </div>
+              {priceUSD && price && (
+                <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,marginTop:4}}>
+                  = {ars(parseFloat(price)*ARS_TO_USD)} (a ${ARS_TO_USD}/U$D)
+                </div>
+              )}
+            </div>
+
+            {/* Reserva */}
+            <div style={{marginBottom:10}}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5}}>
+                <label style={{...lbl, marginBottom:0}}>Reserva</label>
+                <CurrencyToggle isUSD={reservaUSD} onToggle={setReservaUSD}/>
+              </div>
+              <div style={{position:"relative"}}>
+                <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,pointerEvents:"none"}}>
+                  {reservaUSD?"U$D":"$"}
+                </div>
+                <input style={{...inp, paddingLeft:36}} type="number" value={reserva} onChange={e=>setReserva(e.target.value)} placeholder={reservaUSD?"0.00":"20000"} onKeyDown={e=>e.key==="Enter"&&addItem()}/>
+              </div>
+              {reservaUSD && reserva && (
+                <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,marginTop:4}}>
+                  = {ars(parseFloat(reserva)*ARS_TO_USD)} (a ${ARS_TO_USD}/U$D)
+                </div>
+              )}
+            </div>
+
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12}}>
+              <div><label style={lbl}>Costo (USD) <span style={{color:"#374151",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(opcional)</span></label><input style={inp} type="number" value={costo} onChange={e=>setCosto(e.target.value)} placeholder="0.00"/></div>
+              <div><label style={lbl}>Peso (kg) <span style={{color:"#374151",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(opcional)</span></label><input style={inp} type="number" value={peso} onChange={e=>setPeso(e.target.value)} placeholder="0.5"/></div>
+            </div>
+            <Btn variant="ghost" onClick={addItem} disabled={!desc||!price} style={{width:"100%", justifyContent:"center"}}>
+              <Icon name="plus" size={14}/>Agregar producto
+            </Btn>
+          </div>
+
+          {items.length>0&&(
+            <div style={{marginBottom:16}}>
+              {items.map(item=>(
+                <div key={item.id} style={{display:"flex", alignItems:"center", gap:10, background:"#eef0f4", borderRadius:10, padding:"10px 12px", marginBottom:6, border:"1px solid #d4d8e2"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"'Sora',sans-serif", fontSize:13, color:"#0f172a", fontWeight:600, marginBottom:2}}>{item.desc}</div>
+                    <div style={{fontFamily:"'Sora',sans-serif", fontSize:11, color:"#374151", display:"flex", gap:10, flexWrap:"wrap"}}>
+                      <span>{ars(item.price)}{item.priceUSD!=null&&<span style={{color:"#86efac",marginLeft:4}}>(U$D {item.priceUSD})</span>}</span>
+                      <span style={{color:"#4ade80"}}>Reserva: {ars(item.reserva)}{item.reservaUSD!=null&&<span style={{color:"#6ee7b7",marginLeft:4}}>(U$D {item.reservaUSD})</span>}</span>
+                      <span style={{color:"#f87171"}}>Saldo: {ars(item.price-item.reserva)}</span>
+                      {item.photoUrl&&<span style={{color:"#60a5fa"}}>📸 foto</span>}
+                    </div>
+                  </div>
+                  <button onClick={()=>removeItem(item.id)} style={{background:"none", border:"none", color:"#374151", cursor:"pointer", padding:4}}><Icon name="trash" size={13}/></button>
+                </div>
+              ))}
+              <div style={{background:"rgba(59,130,246,0.08)", borderRadius:10, padding:"12px 14px", border:"1px solid rgba(59,130,246,0.15)", marginTop:8}}>
+                <div style={{display:"flex", justifyContent:"space-between", fontFamily:"'Sora',sans-serif", fontSize:12, color:"#374151", marginBottom:4}}><span>Total</span><span style={{color:"#0f172a"}}>{ars(tp)}</span></div>
+                <div style={{display:"flex", justifyContent:"space-between", fontFamily:"'Sora',sans-serif", fontSize:12, color:"#374151", marginBottom:4}}><span>Reserva</span><span style={{color:"#4ade80"}}>{ars(tr)}</span></div>
+                <div style={{display:"flex", justifyContent:"space-between", fontFamily:"'Sora',sans-serif", fontSize:13, fontWeight:700, paddingTop:8, borderTop:"1px solid rgba(255,255,255,0.06)"}}><span style={{color:"#374151"}}>Saldo</span><span style={{color:"#f87171"}}>{ars(tp-tr)}</span></div>
+              </div>
+            </div>
+          )}
+          <div style={{display:"flex", gap:10}}>
+            <Btn variant="ghost" onClick={onClose} style={{flex:1, justifyContent:"center"}}>Cancelar</Btn>
+            <Btn variant="amber" disabled={items.length===0} onClick={()=>items.length>0&&onSave(items)} style={{flex:2, justifyContent:"center"}}>
+              <Icon name="check" size={14}/>Guardar pedido
+            </Btn>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ─── EDIT PHOTO MODAL ────────────────────────────────────────────────────────
+    function EditPhotoModal({ item, onSave, onClose }) {
+      const [url,setUrl] = useState(item.photoUrl||"");
+      return (
+        <Modal title="Link de la foto del producto" onClose={onClose}>
+          <div style={{fontFamily:"'Sora',sans-serif", fontSize:13, color:"#374151", marginBottom:16, marginTop:-10, fontStyle:"italic"}}>"{item.desc}"</div>
+          <div style={{marginBottom:8}}>
+            <label style={lbl}>URL de la foto</label>
+            <div style={{position:"relative"}}>
+              <div style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", color:"#374151", pointerEvents:"none"}}><Icon name="link" size={13}/></div>
+              <input style={{...inp, paddingLeft:32}} value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://..." autoFocus/>
+            </div>
+          </div>
+          <div style={{fontFamily:"'Sora',sans-serif", fontSize:11, color:"#374151", marginBottom:20}}>
+            Podés pegar cualquier link: Google Drive, WhatsApp Web, Dropbox, etc.
+          </div>
+          {url&&(
+            <div style={{marginBottom:16}}>
+              <a href={url} target="_blank" rel="noopener noreferrer" style={{fontFamily:"'Sora',sans-serif", fontSize:12, color:"#60a5fa", display:"inline-flex", alignItems:"center", gap:6}}>
+                <Icon name="image" size={12}/>Probar link →
+              </a>
+            </div>
+          )}
+          <div style={{display:"flex", gap:10}}>
+            <Btn variant="ghost" onClick={onClose} style={{flex:1, justifyContent:"center"}}>Cancelar</Btn>
+            <Btn variant="teal" onClick={()=>onSave(url.trim())} style={{flex:2, justifyContent:"center"}}>
+              <Icon name="check" size={14}/>Guardar link
+            </Btn>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ─── EDIT ITEM MODAL ─────────────────────────────────────────────────────────
+    function EditItemModal({ item, orderId, onSave, onClose }) {
+      const [desc,    setDesc]    = useState(item.desc||"");
+      const [priceUSD,setPriceUSD]= useState(item.priceUSD!=null);
+      const [price,   setPrice]   = useState(item.priceUSD!=null ? item.priceUSD : item.price||0);
+      const [reservaUSD,setReservaUSD]= useState(item.reservaUSD!=null);
+      const [reserva, setReserva] = useState(item.reservaUSD!=null ? item.reservaUSD : item.reserva||0);
+      const [costo,   setCosto]   = useState(item.costo!=null?item.costo:"");
+      const [peso,    setPeso]    = useState(item.peso!=null?item.peso:"");
+      const [photoUrl,setPhotoUrl]= useState(item.photoUrl||"");
+
+      const CurrencyToggle = ({ isUSD, onToggle }) => (
+        <div style={{display:"flex", background:"#e8eaf0", borderRadius:8, padding:2, gap:2}}>
+          {[["ARS","$"],["USD","U$D"]].map(([cur,sym])=>(
+            <button key={cur} onClick={()=>onToggle(cur==="USD")} style={{
+              padding:"3px 10px", borderRadius:6, border:"none", cursor:"pointer",
+              background:(isUSD===(cur==="USD"))?(cur==="USD"?"#16a34a":"#2563eb"):"transparent",
+              color:(isUSD===(cur==="USD"))?"#fff":"#475569",
+              fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700
+            }}>{sym} {cur}</button>
+          ))}
+        </div>
+      );
+
+      const handleSave = () => {
+        const priceARS   = priceUSD   ? parseFloat(price)   * ARS_TO_USD : parseFloat(price)||0;
+        const reservaARS = reservaUSD ? parseFloat(reserva) * ARS_TO_USD : parseFloat(reserva)||0;
+        onSave(orderId, item.id, {
+          desc: desc.trim(),
+          price: priceARS,
+          priceUSD: priceUSD ? parseFloat(price) : null,
+          reserva: reservaARS,
+          reservaUSD: reservaUSD ? parseFloat(reserva) : null,
+          costo: costo!==""?parseFloat(costo):null,
+          peso: peso!==""?parseFloat(peso):null,
+          photoUrl: photoUrl.trim(),
+        });
+      };
+
+      return (
+        <Modal title="Editar producto" onClose={onClose} wide>
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Descripción</label>
+            <input style={inp} value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Nombre del producto" autoFocus/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5}}>
+              <label style={{...lbl,marginBottom:0}}>Precio venta</label>
+              <CurrencyToggle isUSD={priceUSD} onToggle={setPriceUSD}/>
+            </div>
+            <div style={{position:"relative"}}>
+              <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,pointerEvents:"none"}}>{priceUSD?"U$D":"$"}</div>
+              <input style={{...inp,paddingLeft:36}} type="number" value={price} onChange={e=>setPrice(e.target.value)}/>
+            </div>
+            {priceUSD&&price&&<div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,marginTop:4}}>= {ars(parseFloat(price)*ARS_TO_USD)} (a ${ARS_TO_USD}/U$D)</div>}
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5}}>
+              <label style={{...lbl,marginBottom:0}}>Reserva</label>
+              <CurrencyToggle isUSD={reservaUSD} onToggle={setReservaUSD}/>
+            </div>
+            <div style={{position:"relative"}}>
+              <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,pointerEvents:"none"}}>{reservaUSD?"U$D":"$"}</div>
+              <input style={{...inp,paddingLeft:36}} type="number" value={reserva} onChange={e=>setReserva(e.target.value)}/>
+            </div>
+            {reservaUSD&&reserva&&<div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,marginTop:4}}>= {ars(parseFloat(reserva)*ARS_TO_USD)} (a ${ARS_TO_USD}/U$D)</div>}
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12}}>
+            <div><label style={lbl}>Costo (USD)</label><input style={inp} type="number" value={costo} onChange={e=>setCosto(e.target.value)} placeholder="0.00"/></div>
+            <div><label style={lbl}>Peso (kg)</label><input style={inp} type="number" value={peso} onChange={e=>setPeso(e.target.value)} placeholder="0.5"/></div>
+          </div>
+          <div style={{marginBottom:20}}>
+            <label style={lbl}>Link de la foto</label>
+            <div style={{position:"relative"}}>
+              <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",pointerEvents:"none"}}><Icon name="link" size={13}/></div>
+              <input style={{...inp,paddingLeft:32}} value={photoUrl} onChange={e=>setPhotoUrl(e.target.value)} placeholder="https://gyazo.com/..."/>
+            </div>
+          </div>
+          <div style={{display:"flex", gap:10}}>
+            <Btn variant="ghost" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Cancelar</Btn>
+            <Btn variant="primary" onClick={handleSave} style={{flex:2,justifyContent:"center"}}>
+              <Icon name="check" size={14}/>Guardar cambios
+            </Btn>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ─── CLIENT DETAIL ───────────────────────────────────────────────────────────
+    function ClientDetail({ client, orders=[], onBack, onAddOrder, onUpdateOrder, onDeleteOrder, onPrint }) {
+      const [editPhoto,setEditPhoto] = useState(null);
+      const [editItem,setEditItem]   = useState(null);
+      const [ocultarPagados, setOcultarPagados] = useState(true);
+
+      const saveEditedItem = (orderId, itemId, patch) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i => i.id===itemId ? {...i,...patch} : i);
+        const tp = updatedItems.reduce((a,i)=>a+(i.price||0),0);
+        const tr = updatedItems.reduce((a,i)=>a+(i.reserva||0),0);
+        const ts = updatedItems.reduce((a,i)=>a+(i.pagado?0:(i.price||0)-(i.reserva||0)),0);
+        onUpdateOrder(orderId,{items:updatedItems,totalPrice:tp,totalReserva:tr,totalSaldo:ts});
+        setEditItem(null);
+      };
+      const clientOrders = orders.filter(o=>o.clientId===client.id);
+      const totalPedido = clientOrders.reduce((a,o)=>a+o.totalPrice,0);
+      const totalReservado = clientOrders.reduce((a,o)=>a+o.totalReserva,0);
+      const totalSaldo = clientOrders.reduce((a,o)=>a+o.totalSaldo,0);
+      const visibleOrders = ocultarPagados
+        ? clientOrders.filter(o=>o.items.some(i=>!i.pagado))
+        : clientOrders;
+      const hiddenCount = clientOrders.length - visibleOrders.length;
+
+      const togglePagado = (orderId,itemId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,pagado:!i.pagado}:i);
+        onUpdateOrder(orderId,{items:updatedItems, totalSaldo:updatedItems.reduce((a,i)=>a+(i.pagado?0:i.price-i.reserva),0), totalReserva:updatedItems.reduce((a,i)=>a+i.reserva,0)});
+      };
+      const toggleLlegado = (orderId,itemId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,llegado:!i.llegado,enMiami:false,pedidoOnline:false}:i);
+        onUpdateOrder(orderId,{items:updatedItems});
+      };
+      const toggleMostrarRemito = (orderId,itemId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,mostrarRemito:!i.mostrarRemito}:i);
+        onUpdateOrder(orderId,{items:updatedItems});
+      };
+      const toggleMiami = (orderId,itemId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,enMiami:!i.enMiami,llegado:false,pedidoOnline:false}:i);
+        onUpdateOrder(orderId,{items:updatedItems});
+      };
+      const togglePedidoOnline = (orderId,itemId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,pedidoOnline:!i.pedidoOnline,llegado:false,enMiami:false}:i);
+        onUpdateOrder(orderId,{items:updatedItems});
+      };
+      const savePhotoUrl = (orderId,itemId,url) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        onUpdateOrder(orderId,{items:order.items.map(i=>i.id===itemId?{...i,photoUrl:url}:i)});
+        setEditPhoto(null);
+      };
+
+      const statusColors = {pendiente:"#f59e0b", confirmado:"#22c55e", cancelado:"#ef4444"};
+      const statusLabels = {pendiente:"Pendiente", confirmado:"Confirmado", cancelado:"Cancelado"};
+
+      return (
+        <div>
+          <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:24, flexWrap:"wrap"}}>
+            <button onClick={onBack} style={{background:"#e8eaf0", border:"1px solid #d4d8e2", borderRadius:10, padding:"8px 10px", cursor:"pointer", color:"#374151", display:"flex", alignItems:"center"}}>
+              <Icon name="back" size={16}/>
+            </button>
+            <div style={{flex:1}}>
+              <h2 style={{fontFamily:"'Sora',sans-serif", fontSize:22, color:"#0f172a", margin:0, fontWeight:800}}>{client.name}</h2>
+              <div style={{display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap"}}>
+                {client.phone&&(
+                  <a href={`https://wa.me/${client.phone.replace(/\D/g,"")}`} target="_blank" rel="noopener noreferrer"
+                    style={{display:"inline-flex",alignItems:"center",gap:5,background:"#22c55e",borderRadius:8,padding:"4px 12px",textDecoration:"none",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>
+                    💬 WhatsApp
+                  </a>
+                )}
+                {client.address&&(
+                  <a href={`https://maps.google.com/?q=${encodeURIComponent(client.address)}`} target="_blank" rel="noopener noreferrer"
+                    style={{display:"inline-flex",alignItems:"center",gap:5,background:"#3b82f6",borderRadius:8,padding:"4px 12px",textDecoration:"none",fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>
+                    📍 {client.address}
+                  </a>
+                )}
+                {client.note&&<span style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#64748b",fontStyle:"italic"}}>{client.note}</span>}
+              </div>
+            </div>
+            <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+              <button onClick={()=>setOcultarPagados(p=>!p)} style={{
+                padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600,
+                fontFamily:"'Sora',sans-serif", display:"flex", alignItems:"center", gap:5,
+                background: ocultarPagados?"rgba(34,197,94,0.15)":"rgba(255,255,255,0.05)",
+                border: ocultarPagados?"1px solid rgba(34,197,94,0.3)":"1px solid rgba(255,255,255,0.08)",
+                color: ocultarPagados?"#4ade80":"#64748b"
+              }}>
+                {ocultarPagados?"👁️ Mostrar pagados":"🙈 Ocultar pagados"}
+              </button>
+              <Btn variant="ghost" small onClick={onPrint}><Icon name="print" size={13}/>Imprimir remito</Btn>
+              <Btn variant="amber" small onClick={onAddOrder}><Icon name="plus" size={13}/>Nuevo pedido</Btn>
+            </div>
+          </div>
+
+          <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:24}}>
+            <StatCard label="Total pedidos" value={ars(totalPedido)} color="#3b82f6" icon={<Icon name="bag" size={14}/>}/>
+            <StatCard label="Reservado" value={ars(totalReservado)} color="#22c55e" icon={<Icon name="check" size={14}/>}/>
+            <StatCard label="Saldo pendiente" value={ars(totalSaldo)} color="#f87171" icon={<Icon name="dollar" size={14}/>}/>
+          </div>
+
+          {clientOrders.length===0 ? (
+            <div style={{textAlign:"center", padding:"50px 20px", color:"#374151", fontFamily:"'Sora',sans-serif", fontSize:14}}>
+              <div style={{fontSize:40, marginBottom:12}}>📭</div>No hay pedidos todavía.
+              <br/><button onClick={onAddOrder} style={{marginTop:14, background:"none", border:"1px dashed #334155", borderRadius:10, padding:"9px 18px", color:"#374151", cursor:"pointer", fontFamily:"'Sora',sans-serif", fontSize:13}}>+ Agregar primer pedido</button>
+            </div>
+          ) : (
+            <>
+              {ocultarPagados && hiddenCount>0 && (
+                <div style={{background:"rgba(34,197,94,0.07)",border:"1px solid rgba(34,197,94,0.15)",borderRadius:10,padding:"10px 16px",marginBottom:12,fontFamily:"'Sora',sans-serif",fontSize:12,color:"#4ade80",display:"flex",alignItems:"center",gap:8}}>
+                  ✓ {hiddenCount} pedido{hiddenCount!==1?"s":""} completamente pagado{hiddenCount!==1?"s":""} oculto{hiddenCount!==1?"s":""}
+                  <button onClick={()=>setOcultarPagados(false)} style={{background:"none",border:"none",color:"#4ade80",cursor:"pointer",textDecoration:"underline",fontFamily:"'Sora',sans-serif",fontSize:11}}>Mostrar</button>
+                </div>
+              )}
+              {[...visibleOrders].reverse().map(order=>(
+            <div key={order.id} style={{background:"#eef0f4", borderRadius:16, padding:18, border:"1px solid #d4d8e2", marginBottom:12}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8}}>
+                <div style={{fontFamily:"'Sora',sans-serif", fontSize:12, color:"#374151"}}>{order.date}</div>
+                <div style={{display:"flex", gap:5, alignItems:"center", flexWrap:"wrap"}}>
+                  {["pendiente","confirmado","cancelado"].map(s=>(
+                    <button key={s} onClick={()=>onUpdateOrder(order.id,{status:s})} style={{padding:"4px 10px", borderRadius:20, border:"none", cursor:"pointer", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700, background:order.status===s?`${statusColors[s]}22`:"transparent", color:order.status===s?statusColors[s]:"#334155", outline:order.status===s?`1px solid ${statusColors[s]}44`:"none"}}>
+                      {statusLabels[s]}
+                    </button>
+                  ))}
+                  <button onClick={()=>onDeleteOrder(order.id)} style={{background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.15)", borderRadius:8, padding:"4px 8px", cursor:"pointer", color:"#f87171", marginLeft:2}}>
+                    <Icon name="trash" size={12}/>
+                  </button>
+                </div>
+              </div>
+
+              {order.items.map(item=>(
+                <div key={item.id} style={{
+                  padding:"12px 13px", borderRadius:12, marginBottom:6,
+                  background: item.pagado ? "rgba(34,197,94,0.05)" : item.llegado ? "rgba(251,191,36,0.05)" : "rgba(255,255,255,0.02)",
+                  border: item.pagado ? "1px solid rgba(34,197,94,0.15)" : item.llegado ? "1px solid rgba(251,191,36,0.2)" : "1px solid rgba(255,255,255,0.04)"
+                }}>
+                  <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap"}}>
+                        <div style={{fontFamily:"'Sora',sans-serif", fontSize:13, color:item.pagado?"#4ade80":"#e2e8f0", fontWeight:600, textDecoration:item.pagado?"line-through":"none", opacity:item.pagado?0.75:1}}>
+                          {item.desc}
+                        </div>
+                        {item.llegado && !item.pagado && (
+                          <span style={{background:"rgba(251,191,36,0.15)", color:"#fbbf24", borderRadius:20, padding:"2px 8px", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700, whiteSpace:"nowrap"}}>✈️ Llegó a ARG</span>
+                        )}
+                        {item.enMiami && !item.llegado && !item.pagado && (
+                          <span style={{background:"rgba(251,146,60,0.15)", color:"#fb923c", borderRadius:20, padding:"2px 8px", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700, whiteSpace:"nowrap"}}>🌴 En Miami</span>
+                        )}
+                        {item.pedidoOnline && !item.llegado && !item.pagado && (
+                          <span style={{background:"rgba(96,165,250,0.15)", color:"#60a5fa", borderRadius:20, padding:"2px 8px", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700, whiteSpace:"nowrap"}}>🛒 Online</span>
+                        )}
+                        {item.mostrarRemito && !item.llegado && !item.pagado && (
+                          <span style={{background:"rgba(167,139,250,0.15)", color:"#a78bfa", borderRadius:20, padding:"2px 8px", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700, whiteSpace:"nowrap"}}>📋 En remito · aún no llegó</span>
+                        )}
+                      </div>
+                      <div style={{fontFamily:"'Sora',sans-serif", fontSize:11, color:"#374151", display:"flex", gap:12, flexWrap:"wrap"}}>
+                        <span>{ars(item.price)}</span>
+                        <span style={{color:"#22c55e"}}>Reserva: {ars(item.reserva)}</span>
+                        <span style={{color:item.pagado?"#4ade80":"#f87171"}}>{item.pagado?"✓ SALDO PAGADO":`Saldo: ${ars(item.price-item.reserva)}`}</span>
+                      </div>
+                    </div>
+                    <div style={{display:"flex", gap:5, flexShrink:0, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end"}}>
+                      {/* Llegó a Argentina */}
+                      <button onClick={()=>toggleLlegado(order.id,item.id)} style={{padding:"5px 10px", borderRadius:9, border:"none", cursor:"pointer", background:item.llegado?"rgba(251,191,36,0.2)":"rgba(255,255,255,0.05)", color:item.llegado?"#fbbf24":"#475569", fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, whiteSpace:"nowrap"}}>
+                        {item.llegado ? "✈️ En ARG" : "✈️ Llegó?"}
+                      </button>
+                      {/* En Miami */}
+                      {!item.llegado && (
+                        <button onClick={()=>toggleMiami(order.id,item.id)} style={{padding:"5px 10px", borderRadius:9, border:"none", cursor:"pointer", background:item.enMiami?"rgba(251,146,60,0.2)":"rgba(255,255,255,0.05)", color:item.enMiami?"#fb923c":"#475569", fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, whiteSpace:"nowrap"}}>
+                          {item.enMiami ? "🌴 En Miami" : "🌴 Miami?"}
+                        </button>
+                      )}
+                      {/* Pedido Online */}
+                      {!item.llegado && (
+                        <button onClick={()=>togglePedidoOnline(order.id,item.id)} style={{padding:"5px 10px", borderRadius:9, cursor:"pointer", background:item.pedidoOnline?"rgba(96,165,250,0.2)":"rgba(255,255,255,0.05)", border:item.pedidoOnline?"1px solid rgba(96,165,250,0.35)":"1px dashed rgba(255,255,255,0.1)", color:item.pedidoOnline?"#60a5fa":"#475569", fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, whiteSpace:"nowrap"}}>
+                          {item.pedidoOnline ? "🛒 Online" : "🛒 Online?"}
+                        </button>
+                      )}
+                      {/* Mostrar en remito sin haber llegado */}
+                      {!item.llegado && (
+                        <button onClick={()=>toggleMostrarRemito(order.id,item.id)} style={{
+                          padding:"5px 10px", borderRadius:9, cursor:"pointer",
+                          background: item.mostrarRemito ? "rgba(167,139,250,0.2)" : "rgba(255,255,255,0.05)",
+                          border: item.mostrarRemito ? "1px solid rgba(167,139,250,0.35)" : "1px dashed rgba(255,255,255,0.12)",
+                          color: item.mostrarRemito ? "#a78bfa" : "#475569",
+                          fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, whiteSpace:"nowrap"
+                        }}>
+                          {item.mostrarRemito ? "📋 En remito" : "📋 Remito"}
+                        </button>
+                      )}
+                      {/* Foto */}
+                      {item.photoUrl ? (
+                        <>
+                          <button onClick={()=>window.open(item.photoUrl,"_blank")} style={{padding:"5px 10px", borderRadius:9, border:"1px solid rgba(96,165,250,0.3)", cursor:"pointer", background:"rgba(96,165,250,0.12)", color:"#60a5fa", display:"flex", alignItems:"center", gap:4, fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700}}>
+                            <Icon name="image" size={12}/>Ver foto
+                          </button>
+                          <button onClick={()=>setEditPhoto({orderId:order.id,item})} style={{padding:"5px 7px", borderRadius:9, border:"1px solid #d4d8e2", cursor:"pointer", background:"#f5f6f9", color:"#374151", display:"flex", alignItems:"center"}}>
+                            <Icon name="edit" size={11}/>
+                          </button>
+                        </>
+                      ):(
+                        <button onClick={()=>setEditPhoto({orderId:order.id,item})} style={{padding:"5px 10px", borderRadius:9, border:"1px dashed rgba(255,255,255,0.12)", cursor:"pointer", background:"transparent", color:"#374151", display:"flex", alignItems:"center", gap:4, fontFamily:"'Sora',sans-serif", fontSize:11}}>
+                          <Icon name="image" size={12}/>+ Foto
+                        </button>
+                      )}
+                      {/* Editar producto */}
+                      <button onClick={()=>setEditItem({orderId:order.id,item})} style={{padding:"5px 10px", borderRadius:9, border:"1px solid rgba(167,139,250,0.3)", cursor:"pointer", background:"rgba(167,139,250,0.1)", color:"#a78bfa", display:"flex", alignItems:"center", gap:4, fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700}}>
+                        <Icon name="edit" size={11}/>Editar
+                      </button>
+                      {/* Pagado */}
+                      <button onClick={()=>togglePagado(order.id,item.id)} style={{padding:"5px 11px", borderRadius:9, border:"none", cursor:"pointer", background:item.pagado?"rgba(34,197,94,0.15)":"rgba(248,113,113,0.12)", color:item.pagado?"#4ade80":"#f87171", fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:700, whiteSpace:"nowrap"}}>
+                        {item.pagado?"✓ Pagado":"Marcar pagado"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{display:"flex", justifyContent:"flex-end", gap:20, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.05)"}}>
+                <span style={{fontFamily:"'Sora',sans-serif", fontSize:12, color:"#374151"}}>Reserva: <b style={{color:"#22c55e"}}>{ars(order.totalReserva)}</b></span>
+                <span style={{fontFamily:"'Sora',sans-serif", fontSize:12, color:"#374151"}}>Saldo: <b style={{color:"#f87171"}}>{ars(order.totalSaldo)}</b></span>
+              </div>
+            </div>
+          ))}
+            </>
+          )}
+
+          {editPhoto&&<EditPhotoModal item={editPhoto.item} onSave={url=>savePhotoUrl(editPhoto.orderId,editPhoto.item.id,url)} onClose={()=>setEditPhoto(null)}/>}
+          {editItem&&<EditItemModal item={editItem.item} orderId={editItem.orderId} onSave={saveEditedItem} onClose={()=>setEditItem(null)}/>}
+        </div>
+      );
+    }
+
+    // ─── CLIENTS LIST ────────────────────────────────────────────────────────────
+    function ClientsList({ clients, orders, onSelect, onNewClient, onDeleteClient }) {
+      const safeClients = Array.isArray(clients) ? clients : [];
+      const safeOrders  = Array.isArray(orders)  ? orders  : [];
+      const [search,setSearch] = useState("");
+      const filtered = safeClients
+        .filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.phone?.includes(search))
+        .sort((a,b)=>a.name.localeCompare(b.name,"es"));
+      const totalSaldoGeneral = safeOrders.reduce((a,o)=>a+(o.totalSaldo||0),0);
+      const totalCobrado = safeOrders.reduce((a,o)=>a+(o.totalReserva||0),0);
+
+      return (
+        <div>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:28}}>
+            <StatCard label="Clientas" value={clients.length} color="#3b82f6" icon={<Icon name="user" size={14}/>}/>
+            <StatCard label="Total cobrado" value={ars(totalCobrado)} color="#22c55e" icon={<Icon name="dollar" size={14}/>}/>
+            <StatCard label="Saldo pendiente" value={ars(totalSaldoGeneral)} color="#f87171" icon={<Icon name="bag" size={14}/>}/>
+          </div>
+          <div style={{display:"flex", gap:10, marginBottom:20}}>
+            <div style={{flex:1, position:"relative"}}>
+              <div style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#374151", pointerEvents:"none"}}><Icon name="search" size={14}/></div>
+              <input style={{...inp, paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar clienta..."/>
+            </div>
+            <Btn variant="primary" onClick={onNewClient}><Icon name="plus" size={14}/>Nueva clienta</Btn>
+          </div>
+          {filtered.length===0 ? (
+            <div style={{textAlign:"center", padding:"60px 20px", color:"#374151", fontFamily:"'Sora',sans-serif"}}>
+              <div style={{fontSize:48, marginBottom:14}}>👩‍💼</div>
+              <div style={{fontSize:15, fontWeight:600, marginBottom:8, color:"#374151"}}>{clients.length===0?"Aún no tenés clientas":"Sin resultados"}</div>
+              {clients.length===0&&<button onClick={onNewClient} style={{marginTop:8, background:"none", border:"1px dashed #334155", borderRadius:10, padding:"9px 20px", color:"#374151", cursor:"pointer", fontFamily:"'Sora',sans-serif", fontSize:13}}>+ Crear primera clienta</button>}
+            </div>
+          ):(
+            <div style={{display:"grid", gap:8}}>
+              {filtered.map(client=>{
+                const cOrders = orders.filter(o=>o.clientId===client.id);
+                const saldo = (Array.isArray(cOrders)?cOrders:[]).reduce((a,o)=>a+(o.totalSaldo||0),0);
+                const reservado = (Array.isArray(cOrders)?cOrders:[]).reduce((a,o)=>a+(o.totalReserva||0),0);
+                const pendingCount = cOrders.filter(o=>o.status==="pendiente").length;
+                return (
+                  <div key={client.id} onClick={()=>onSelect(client)}
+                    style={{background:"#eef0f4", borderRadius:14, padding:"16px 18px", border:"1px solid #d4d8e2", cursor:"pointer", display:"flex", alignItems:"center", gap:14, transition:"background .15s,border .15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.06)";e.currentTarget.style.border="1px solid rgba(59,130,246,0.3)"}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.03)";e.currentTarget.style.border="1px solid rgba(255,255,255,0.06)"}}>
+                    <div style={{width:42, height:42, borderRadius:12, background:"linear-gradient(135deg,#1e3a5f,#1e40af)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Sora',sans-serif", fontSize:16, fontWeight:800, color:"#93c5fd", flexShrink:0}}>
+                      {client.name[0].toUpperCase()}
+                    </div>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:3}}>
+                        <span style={{fontFamily:"'Sora',sans-serif", fontSize:14, color:"#0f172a", fontWeight:700}}>{client.name}</span>
+                        {pendingCount>0&&<span style={{background:"rgba(245,158,11,0.15)", color:"#f59e0b", borderRadius:20, padding:"2px 8px", fontFamily:"'Sora',sans-serif", fontSize:10, fontWeight:700}}>{pendingCount} pend.</span>}
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2}}>
+                        <span style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#374151"}}>
+                          {cOrders.length} pedido{cOrders.length!==1?"s":""} · cobrado <span style={{color:"#16a34a",fontWeight:700}}>{ars(reservado)}</span>
+                        </span>
+                        {client.phone&&(
+                          <a href={`https://wa.me/${client.phone.replace(/\D/g,"")}`} target="_blank" rel="noopener noreferrer"
+                            onClick={e=>e.stopPropagation()}
+                            style={{display:"inline-flex",alignItems:"center",gap:4,background:"#22c55e",borderRadius:6,padding:"2px 8px",textDecoration:"none",fontFamily:"'Sora',sans-serif",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
+                            💬 WA
+                          </a>
+                        )}
+                        {client.address&&<span style={{fontFamily:"'Sora',sans-serif",fontSize:10,color:"#64748b"}}>📍 {client.address}</span>}
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right", flexShrink:0}}>
+                      <div style={{fontFamily:"'Sora',sans-serif", fontSize:15, fontWeight:800, color:saldo>0?"#f87171":"#4ade80"}}>{ars(saldo)}</div>
+                      <div style={{fontFamily:"'Sora',sans-serif", fontSize:10, color:"#374151"}}>{saldo>0?"saldo pend.":"al día ✓"}</div>
+                    </div>
+                    <button onClick={e=>{e.stopPropagation();onDeleteClient(client.id)}} style={{background:"none", border:"none", color:"#374151", cursor:"pointer", padding:"4px", flexShrink:0}}><Icon name="trash" size={14}/></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── PHOTO TOOLTIP ───────────────────────────────────────────────────────────
+    // Convert share links to direct image embed links
+    const toDirectImg = url => {
+      if (!url) return null;
+      // Gyazo: https://gyazo.com/HASH → https://i.gyazo.com/HASH.png
+      const gyazo = url.match(/gyazo\.com\/([a-zA-Z0-9]+)(?:\?|$)/);
+      if (gyazo) return `https://i.gyazo.com/${gyazo[1]}.png`;
+      // i.gyazo.com direct link already
+      if (url.includes("i.gyazo.com")) return url;
+      // Google Drive: /file/d/FILE_ID/
+      const driveFile = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (driveFile) return `https://drive.google.com/thumbnail?id=${driveFile[1]}&sz=w400`;
+      // Google Drive: ?id=FILE_ID
+      const driveOpen = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (driveOpen && url.includes("drive.google.com")) return `https://drive.google.com/thumbnail?id=${driveOpen[1]}&sz=w400`;
+      // Dropbox
+      if (url.includes("dropbox.com")) return url.replace("dl=0","raw=1").replace("www.dropbox","dl.dropboxusercontent");
+      // Direct image URLs
+      if (/\.(jpe?g|png|webp|gif)(\?|$)/i.test(url)) return url;
+      return null;
+    };
+
+    function PhotoTooltip({ url }) {
+      const [show, setShow] = useState(false);
+      const [pos, setPos] = useState({x:0, y:0});
+      const [loaded, setLoaded] = useState(false);
+      const [error, setError] = useState(false);
+
+      const directUrl = toDirectImg(url);
+
+      const handleMouseEnter = e => {
+        setShow(true); setLoaded(false); setError(false);
+        setPos({ x: e.clientX, y: e.clientY });
+      };
+      const handleMouseMove = e => setPos({ x: e.clientX, y: e.clientY });
+      const handleMouseLeave = () => setShow(false);
+
+      const tooltipTop  = pos.y > 240 ? pos.y - 220 : pos.y + 24;
+      const tooltipLeft = Math.min(Math.max(pos.x - 95, 8), window.innerWidth - 210);
+
+      return (
+        <>
+          <button
+            onMouseEnter={handleMouseEnter}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+            onClick={()=>window.open(url,"_blank")}
+            style={{
+              background:"rgba(96,165,250,0.15)", border:"1px solid rgba(96,165,250,0.3)",
+              borderRadius:6, padding:"3px 7px", cursor:"pointer",
+              color:"#60a5fa", fontSize:11, lineHeight:1, flexShrink:0,
+              display:"inline-flex", alignItems:"center", gap:3,
+              fontFamily:"'Sora',sans-serif", fontWeight:600
+            }}
+          >
+            <Icon name="image" size={11}/> 📸
+          </button>
+
+          {show && (
+            <div style={{
+              position:"fixed", left:tooltipLeft, top:tooltipTop,
+              zIndex:9000, pointerEvents:"none",
+              background:"#f5f6f9", border:"2px solid rgba(96,165,250,0.35)",
+              borderRadius:12, padding:8, boxShadow:"0 16px 48px rgba(0,0,0,0.7)",
+              width:200, fontFamily:"'Sora',sans-serif"
+            }}>
+              {directUrl ? (
+                <>
+                  {!loaded && !error && (
+                    <div style={{height:150,display:"flex",alignItems:"center",justifyContent:"center",color:"#374151",fontSize:11}}>
+                      Cargando...
+                    </div>
+                  )}
+                  {error && (
+                    <div style={{padding:"10px 8px",textAlign:"center"}}>
+                      <div style={{fontSize:24,marginBottom:6}}>🖼️</div>
+                      <div style={{fontSize:11,color:"#1f2937",fontWeight:700,marginBottom:8}}>Clic para abrir la foto</div>
+                      <div style={{fontSize:9,color:"#1f2937",fontWeight:700,wordBreak:"break-all"}}>{url.slice(0,50)}...</div>
+                    </div>
+                  )}
+                  <img src={directUrl} alt="preview"
+                    onLoad={()=>setLoaded(true)}
+                    onError={()=>setError(true)}
+                    style={{display:loaded?"block":"none",width:"100%",borderRadius:7,maxHeight:220,objectFit:"cover"}}
+                  />
+                </>
+              ) : (
+                <div style={{padding:"10px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:24,marginBottom:6}}>🔗</div>
+                  <div style={{fontSize:11,color:"#1f2937",fontWeight:700,marginBottom:4}}>Clic para abrir la foto</div>
+                  <div style={{fontSize:9,color:"#1f2937",fontWeight:700,wordBreak:"break-all",lineHeight:1.4}}>{url.slice(0,60)}{url.length>60?"...":""}</div>
+                  <div style={{marginTop:8,fontSize:10,color:"#1f2937",fontWeight:700,background:"#e8eaf0",borderRadius:6,padding:"4px 8px"}}>
+                    💡 Usá Gyazo, Google Drive o un link directo de imagen para previsualizar
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    // ─── PLANILLA VIEW ───────────────────────────────────────────────────────────
+    const USD_POR_KG = 40;
+    const ARS_TO_USD = 1550; // tipo de cambio fijo
+
+    function EditableCell({ value, onSave, prefix="", suffix="", color="#e2e8f0" }) {
+      const [editing, setEditing] = useState(false);
+      const [val, setVal] = useState(value ?? "");
+      const ref = useRef();
+      useEffect(()=>{ if(editing) ref.current?.select(); },[editing]);
+      const commit = () => {
+        setEditing(false);
+        const parsed = val===""?null:parseFloat(val);
+        if(parsed !== value) onSave(parsed);
+      };
+      if(editing) return (
+        <input ref={ref} type="number" value={val} onChange={e=>setVal(e.target.value)}
+          onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape"){setEditing(false);setVal(value??"")}}}
+          style={{width:"100%",background:"rgba(255,255,255,0.12)",border:"1.5px solid #a78bfa",borderRadius:6,
+            padding:"4px 6px",color:"#f0e6ff",fontFamily:"'Sora',sans-serif",fontSize:12,outline:"none",
+            textAlign:"right",minWidth:65}}/>
+      );
+      return (
+        <div onClick={()=>setEditing(true)} title="Clic para editar"
+          style={{cursor:"pointer",color,fontFamily:"'Sora',sans-serif",fontSize:12,
+            padding:"2px 4px",borderRadius:5,transition:"background .1s",whiteSpace:"nowrap",
+            borderBottom:"1px dashed rgba(167,139,250,0.3)"}}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(167,139,250,0.1)"}
+          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+          {value!=null?`${prefix}${value.toLocaleString("es-AR")}${suffix}`:<span style={{color:"#374151"}}>— editar</span>}
+        </div>
+      );
+    }
+
+    function ToggleBtn({ active, onToggle, label, activeColor, icon }) {
+      return (
+        <button onClick={e=>{e.stopPropagation();onToggle();}} style={{
+          padding:"3px 7px",borderRadius:20,border:"none",cursor:"pointer",fontSize:10,fontWeight:700,
+          background:active?`${activeColor}22`:"rgba(255,255,255,0.04)",
+          color:active?activeColor:"#334155",
+          outline:active?`1px solid ${activeColor}44`:"none",
+          fontFamily:"'Sora',sans-serif",whiteSpace:"nowrap",transition:"all .15s"
+        }}>{icon} {label}</button>
+      );
+    }
+
+    function PlanillaView({ clients=[], orders=[], onUpdateOrder }) {
+      const [search, setSearch] = useState("");
+      const [filtro, setFiltro] = useState("todos");
+      const [showResumen, setShowResumen] = useState(false);
+      const usd = n => n!=null?`U$D ${parseFloat(n).toFixed(2)}`:"—";
+
+      const rows = clients.flatMap(client => {
+        const cOrders = orders.filter(o=>o.clientId===client.id&&o.status!=="cancelado");
+        return cOrders.flatMap(order=>order.items.map(item=>{
+          const costoEnvio = item.peso!=null ? item.peso*USD_POR_KG : null;
+          const costoTotal = (item.costo!=null||costoEnvio!=null) ? (item.costo||0)+(costoEnvio||0) : null;
+          // Price in USD: use stored priceUSD if available, else convert from ARS
+          const priceInUSD = item.priceUSD!=null ? item.priceUSD : (item.price||0)/ARS_TO_USD;
+          const ganancia   = costoTotal!=null ? priceInUSD - costoTotal : null;
+          return {
+            orderId:order.id, itemId:item.id,
+            clientName:client.name, clientPhone:client.phone||"", clientId:client.id,
+            desc:item.desc, price:item.price||0, reserva:item.reserva||0,
+            priceUSD:item.priceUSD??null, reservaUSD:item.reservaUSD??null,
+            saldo:item.pagado?0:(item.price||0)-(item.reserva||0),
+            costo:item.costo??null, peso:item.peso??null, costoEnvio, ganancia,
+            photoUrl:item.photoUrl||null,
+            pagado:!!item.pagado, llegado:!!item.llegado,
+            enMiami:!!item.enMiami, pedidoOnline:!!item.pedidoOnline, date:order.date,
+          };
+        }));
+      });
+
+      const filtered = rows.filter(r=>{
+        const ms = r.clientName.toLowerCase().includes(search.toLowerCase())||r.desc.toLowerCase().includes(search.toLowerCase());
+        if(!ms) return false;
+        if(filtro==="con_saldo") return !r.pagado&&r.saldo>0;
+        if(filtro==="llegados")  return r.llegado;
+        if(filtro==="miami")     return r.enMiami;
+        if(filtro==="online")    return r.pedidoOnline;
+        return true;
+      }).sort((a,b)=>a.clientName.localeCompare(b.clientName,"es"));
+
+      const patchItem = (orderId,itemId,patch) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,...patch}:i);
+        const tp = updatedItems.reduce((a,i)=>a+(i.price||0),0);
+        const tr = updatedItems.reduce((a,i)=>a+(i.reserva||0),0);
+        const ts = updatedItems.reduce((a,i)=>a+(i.pagado?0:(i.price||0)-(i.reserva||0)),0);
+        onUpdateOrder(orderId,{items:updatedItems,totalPrice:tp,totalReserva:tr,totalSaldo:ts});
+      };
+
+      const totalVentas  = filtered.reduce((a,r)=>a+r.price,0);
+      const totalCobrado = filtered.reduce((a,r)=>a+r.reserva,0);
+      const totalSaldos  = filtered.reduce((a,r)=>a+r.saldo,0);
+      const totalCosto   = filtered.filter(r=>r.costo!=null).reduce((a,r)=>a+r.costo,0);
+      const totalEnvio   = filtered.filter(r=>r.costoEnvio!=null).reduce((a,r)=>a+r.costoEnvio,0);
+      const totalGanancia= filtered.filter(r=>r.ganancia!=null).reduce((a,r)=>a+r.ganancia,0);
+      const totalPeso    = filtered.filter(r=>r.peso!=null).reduce((a,r)=>a+r.peso,0);
+
+      const clientSummary = {};
+      filtered.forEach(r=>{
+        if(!clientSummary[r.clientId]) clientSummary[r.clientId]={name:r.clientName,total:0,cobrado:0,saldo:0,items:0};
+        clientSummary[r.clientId].total+=r.price; clientSummary[r.clientId].cobrado+=r.reserva;
+        clientSummary[r.clientId].saldo+=r.saldo; clientSummary[r.clientId].items++;
+      });
+
+      const th=(label,align="left",minW=0)=>(
+        <th style={{background:"#4f46e5",color:"#312e81",padding:"9px 10px",fontSize:10,textAlign:align,
+          letterSpacing:0.7,textTransform:"uppercase",fontFamily:"'Sora',sans-serif",fontWeight:700,
+          whiteSpace:"nowrap",borderBottom:"2px solid rgba(167,139,250,0.3)",minWidth:minW||"auto"}}>{label}</th>
+      );
+
+      return (
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:12,flexWrap:"wrap"}}>
+            <div>
+              <h2 style={{fontFamily:"'Sora',sans-serif",fontSize:18,color:"#0f172a",margin:0,fontWeight:800}}>Planilla general</h2>
+              <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700}}>
+                {filtered.length} productos · {Object.keys(clientSummary).length} clientas
+                <span style={{marginLeft:8,color:"rgba(167,139,250,0.5)"}}>· Tocá precio, reserva, costo o peso para editar</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+            {/* Stat pills - compact horizontal */}
+            {[
+              {label:"Ventas", val:<span>U$D {(totalVentas/ARS_TO_USD).toFixed(0)}<span style={{fontSize:10,color:"#c4b5fd",marginLeft:4}}>{ars(totalVentas)}</span></span>, color:"#a78bfa"},
+              {label:"Cobrado", val:<span>U$D {(totalCobrado/ARS_TO_USD).toFixed(0)}<span style={{fontSize:10,color:"#86efac",marginLeft:4}}>{ars(totalCobrado)}</span></span>, color:"#22c55e"},
+              {label:"Saldo", val:<span>U$D {(totalSaldos/ARS_TO_USD).toFixed(0)}<span style={{fontSize:10,color:"#fca5a5",marginLeft:4}}>{ars(totalSaldos)}</span></span>, color:"#f87171"},
+              {label:"Costo", val:usd(totalCosto||null), color:"#fb923c"},
+              {label:`Envío x${USD_POR_KG}`, val:usd(totalEnvio||null), color:"#f59e0b"},
+              {label:"Ganancia", val:totalGanancia>0?<span>U$D {totalGanancia.toFixed(0)}<span style={{fontSize:10,color:"#6ee7b7",marginLeft:4}}>{ars(totalGanancia*ARS_TO_USD)}</span></span>:"—", color:"#34d399"},
+              {label:"Peso", val:totalPeso>0?`${totalPeso.toFixed(2)} kg`:"—", color:"#60a5fa"},
+            ].map(({label,val,color})=>(
+              <div key={label} style={{background:"#f5f6f9",border:`1px solid ${color}22`,borderRadius:10,padding:"9px 18px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                <span style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700,textTransform:"uppercase",letterSpacing:0.7,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>
+                <span style={{fontFamily:"'Sora',sans-serif",fontSize:15,color,fontWeight:800,whiteSpace:"nowrap"}}>{val}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+            <div style={{position:"relative",flex:1,minWidth:180}}>
+              <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",pointerEvents:"none"}}><Icon name="search" size={14}/></div>
+              <input style={{width:"100%",background:"#e8eaf0",border:"1.5px solid rgba(255,255,255,0.1)",borderRadius:10,padding:"9px 13px 9px 33px",color:"#0f172a",fontFamily:"'Sora',sans-serif",fontSize:13,fontWeight:600,outline:"none",boxSizing:"border-box"}}
+                value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar clienta o producto..."/>
+            </div>
+            {[["todos","Todos"],["con_saldo","Con saldo"],["llegados","✈️ ARG"],["miami","🌴 Miami"],["online","🛒 Online"]].map(([val,label])=>(
+              <button key={val} onClick={()=>setFiltro(val)} style={{
+                padding:"9px 12px",borderRadius:10,cursor:"pointer",
+                background:filtro===val?"rgba(167,139,250,0.2)":"rgba(255,255,255,0.04)",
+                border:filtro===val?"1px solid rgba(167,139,250,0.4)":"1px solid rgba(255,255,255,0.08)",
+                color:filtro===val?"#a78bfa":"#64748b",
+                fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:600
+              }}>{label}</button>
+            ))}
+            {/* Resumen toggle button */}
+            <button onClick={()=>setShowResumen(p=>!p)} style={{
+              padding:"9px 14px",borderRadius:10,cursor:"pointer",
+              background:showResumen?"rgba(96,165,250,0.2)":"rgba(255,255,255,0.04)",
+              border:showResumen?"1px solid rgba(96,165,250,0.4)":"1px solid rgba(255,255,255,0.08)",
+              color:showResumen?"#60a5fa":"#64748b",
+              fontFamily:"'Sora',sans-serif",fontSize:12,fontWeight:600,
+              display:"flex",alignItems:"center",gap:6
+            }}>
+              👥 Resumen por clienta
+            </button>
+          </div>
+
+          {filtered.length===0?(
+            <div style={{textAlign:"center",padding:"50px",color:"#374151",fontFamily:"'Sora',sans-serif"}}>
+              <div style={{fontSize:36,marginBottom:10}}>📭</div>No hay productos que coincidan.
+            </div>
+          ):(
+            <div style={{borderRadius:14,border:"1px solid #d4d8e2",marginBottom:28}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead>
+                  <tr>
+                    {th("Clienta","left")}
+                    {th("Producto","left")}
+                    {th("Precio ✏️","right")}
+                    {th("Reserva ✏️","right")}
+                    {th("Saldo","right")}
+                    {th("Costo USD ✏️","right")}
+                    {th("Peso kg ✏️","right")}
+                    {th(`Envío x${USD_POR_KG}`,"right")}
+                    {th("Ganancia","right")}
+                    {th("Estado","center")}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row,idx)=>{
+                    const isFirstOfClient = idx===0 || filtered[idx-1].clientId !== row.clientId;
+                    const clientRowCount = filtered.filter(r=>r.clientId===row.clientId).length;
+                    // Row background by state
+                    const bg = row.llegado      ? "rgba(34,197,94,0.07)"
+                             : row.enMiami      ? "rgba(100,116,139,0.12)"
+                             : row.pedidoOnline ? "rgba(234,179,8,0.07)"
+                             : row.pagado       ? "rgba(34,197,94,0.04)"
+                             : idx%2===0        ? "rgba(255,255,255,0.02)" : "transparent";
+                    const prodBg    = row.llegado  ? "rgba(34,197,94,0.15)"
+                                    : row.enMiami  ? "rgba(100,116,139,0.2)"
+                                    : row.pedidoOnline ? "rgba(234,179,8,0.15)"
+                                    : "transparent";
+                    const prodColor = row.llegado  ? "#4ade80"
+                                    : row.enMiami  ? "#94a3b8"
+                                    : row.pedidoOnline ? "#fde047"
+                                    : "#cbd5e1";
+                    const fmtPrice   = row.priceUSD!=null
+                      ? <span>U$D {row.priceUSD.toLocaleString("es-AR")}<span style={{display:"block",fontSize:10,color:"#1f2937",fontWeight:700}}>{ars(row.price)}</span></span>
+                      : <span>{ars(row.price)}</span>;
+                    const fmtReserva = row.reservaUSD!=null
+                      ? <span>U$D {row.reservaUSD.toLocaleString("es-AR")}<span style={{display:"block",fontSize:10,color:"#1f2937",fontWeight:700}}>{ars(row.reserva)}</span></span>
+                      : <span>{ars(row.reserva)}</span>;
+                    return (
+                      <tr key={`${row.orderId}-${row.itemId}`} style={{
+                        background:bg,
+                        borderBottom:"1px solid rgba(255,255,255,0.04)",
+                        borderTop: isFirstOfClient && idx>0 ? "2px solid rgba(167,139,250,0.15)" : "none"
+                      }}>
+                        {/* Client name - only on first row, rowspan */}
+                        {isFirstOfClient && (
+                          <td rowSpan={clientRowCount} style={{
+                            padding:"12px 12px", fontFamily:"'Sora',sans-serif", fontSize:14,
+                            color:"#0f172a", fontWeight:800, whiteSpace:"nowrap",
+                            verticalAlign:"top", borderRight:"1px solid rgba(255,255,255,0.06)"
+                          }}>
+                            {row.clientName}
+                            {row.clientPhone&&<div style={{fontSize:11,color:"#1f2937",fontWeight:700,fontWeight:400,marginTop:2}}>{row.clientPhone}</div>}
+                          </td>
+                        )}
+                        <td style={{padding:"12px 10px",maxWidth:240,background:prodBg,borderRadius:4}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Sora',sans-serif",fontSize:13,color:prodColor,fontWeight:row.llegado||row.enMiami||row.pedidoOnline?700:500,flex:1}} title={row.desc}>{row.desc}</div>
+                            {row.photoUrl && <PhotoTooltip url={row.photoUrl}/>}
+                          </div>
+                          <div style={{fontSize:10,color:"#1f2937",fontWeight:700,marginTop:2}}>{row.date}</div>
+                        </td>
+                        <td style={{padding:"8px 10px",textAlign:"right"}}>
+                          <EditableCell
+                            value={row.priceUSD!=null ? row.priceUSD : row.price}
+                            color={row.priceUSD!=null?"#86efac":"#e2e8f0"}
+                            prefix={row.priceUSD!=null?"U$D ":"$ "}
+                            onSave={v=>{
+                              const newPrice = row.priceUSD!=null ? (v||0)*ARS_TO_USD : (v||0);
+                              patchItem(row.orderId,row.itemId,{
+                                price:newPrice,
+                                priceUSD:row.priceUSD!=null?(v||0):null
+                              });
+                            }}
+                          />
+                          {row.priceUSD!=null&&<div style={{fontSize:10,color:"#1f2937",fontWeight:700,marginTop:1}}>{ars(row.price)}</div>}
+                        </td>
+                        <td style={{padding:"8px 10px",textAlign:"right"}}>
+                          <EditableCell
+                            value={row.reservaUSD!=null ? row.reservaUSD : row.reserva}
+                            color={row.reservaUSD!=null?"#6ee7b7":"#4ade80"}
+                            prefix={row.reservaUSD!=null?"U$D ":"$ "}
+                            onSave={v=>{
+                              const newReserva = row.reservaUSD!=null ? (v||0)*ARS_TO_USD : (v||0);
+                              patchItem(row.orderId,row.itemId,{
+                                reserva:newReserva,
+                                reservaUSD:row.reservaUSD!=null?(v||0):null
+                              });
+                            }}
+                          />
+                          {row.reservaUSD!=null&&<div style={{fontSize:10,color:"#1f2937",fontWeight:700,marginTop:1}}>{ars(row.reserva)}</div>}
+                        </td>
+                        <td style={{padding:"8px 10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:row.pagado?"#4ade80":"#f87171",fontWeight:700,textAlign:"right",whiteSpace:"nowrap"}}>
+                          {row.pagado?"✓":<span>U$D {(row.saldo/ARS_TO_USD).toFixed(0)}<span style={{display:"block",fontSize:10,color:"#1f2937",fontWeight:700,fontWeight:400}}>{ars(row.saldo)}</span></span>}
+                        </td>
+                        <td style={{padding:"8px 10px",textAlign:"right"}}>
+                          <EditableCell value={row.costo} color="#fb923c" prefix="U$D "
+                            onSave={v=>patchItem(row.orderId,row.itemId,{costo:v})}/>
+                        </td>
+                        <td style={{padding:"8px 10px",textAlign:"right"}}>
+                          <EditableCell value={row.peso} color="#60a5fa" suffix=" kg"
+                            onSave={v=>patchItem(row.orderId,row.itemId,{peso:v})}/>
+                        </td>
+                        <td style={{padding:"8px 10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#f59e0b",textAlign:"right",whiteSpace:"nowrap"}}>
+                          {row.costoEnvio!=null?`U$D ${row.costoEnvio.toFixed(2)}`:"—"}
+                        </td>
+                        <td style={{padding:"8px 10px",fontFamily:"'Sora',sans-serif",fontSize:12,textAlign:"right",whiteSpace:"nowrap",
+                          color:row.ganancia!=null?(row.ganancia>0?"#34d399":"#f87171"):"#475569",fontWeight:row.ganancia!=null?700:400}}>
+                          {row.ganancia!=null?<span>U$D {row.ganancia.toFixed(0)}</span>:"—"}
+                        </td>
+                        <td style={{padding:"6px 8px",textAlign:"center"}}>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center"}}>
+                            <ToggleBtn active={row.llegado} activeColor="#fbbf24" label="ARG" icon="✈️"
+                              onToggle={()=>patchItem(row.orderId,row.itemId,{llegado:!row.llegado, enMiami:false, pedidoOnline:false})}/>
+                            <ToggleBtn active={row.enMiami} activeColor="#fb923c" label="Miami" icon="🌴"
+                              onToggle={()=>patchItem(row.orderId,row.itemId,{enMiami:!row.enMiami, llegado:false, pedidoOnline:false})}/>
+                            <ToggleBtn active={row.pedidoOnline} activeColor="#60a5fa" label="Online" icon="🛒"
+                              onToggle={()=>patchItem(row.orderId,row.itemId,{pedidoOnline:!row.pedidoOnline, llegado:false, enMiami:false})}/>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{background:"rgba(167,139,250,0.08)",borderTop:"2px solid rgba(167,139,250,0.2)"}}>
+                    <td colSpan={2} style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#a78bfa",fontWeight:700}}>TOTALES ({filtered.length})</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#0f172a",fontWeight:600,fontWeight:700,textAlign:"right"}}>{ars(totalVentas)}</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#4ade80",fontWeight:700,textAlign:"right"}}>{ars(totalCobrado)}</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#f87171",fontWeight:700,textAlign:"right"}}>U$D {(totalSaldos/ARS_TO_USD).toFixed(0)}<span style={{display:"block",fontSize:10,fontWeight:400}}>{ars(totalSaldos)}</span></td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#fb923c",fontWeight:700,textAlign:"right"}}>{usd(totalCosto||null)}</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#60a5fa",fontWeight:700,textAlign:"right"}}>{totalPeso>0?`${totalPeso.toFixed(2)} kg`:"—"}</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#f59e0b",fontWeight:700,textAlign:"right"}}>{usd(totalEnvio||null)}</td>
+                    <td style={{padding:"10px",fontFamily:"'Sora',sans-serif",fontSize:12,color:"#34d399",fontWeight:700,textAlign:"right"}}>{totalGanancia>0?`U$D ${totalGanancia.toFixed(0)}`:"—"}</td>
+                    <td/>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          {showResumen && Object.keys(clientSummary).length>0&&(
+            <div style={{marginTop:24}}>
+              <h3 style={{fontFamily:"'Sora',sans-serif",fontSize:16,color:"#0f172a",fontWeight:700,marginBottom:14}}>👥 Resumen por clienta</h3>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:8}}>
+                {Object.values(clientSummary).sort((a,b)=>b.saldo-a.saldo).map((c,i)=>(
+                  <div key={i} style={{background:"#eef0f4",borderRadius:12,padding:"12px 16px",border:"1px solid #d4d8e2",display:"flex",alignItems:"center",gap:14}}>
+                    <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,#1e1b4b,#3730a3)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Sora',sans-serif",fontSize:14,fontWeight:800,color:"#a78bfa",flexShrink:0}}>
+                      {c.name[0].toUpperCase()}
+                    </div>
+                    <div style={{flex:1,minWidth:80}}>
+                      <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color:"#0f172a",fontWeight:600,fontWeight:700}}>{c.name}</div>
+                      <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#1f2937",fontWeight:700}}>{c.items} producto{c.items!==1?"s":""}</div>
+                    </div>
+                    <div style={{display:"flex",gap:16}}>
+                      {[["Total",ars(c.total),"#e2e8f0"],["Cobrado",ars(c.cobrado),"#4ade80"],["Saldo",c.saldo>0?ars(c.saldo):"✓ Al día",c.saldo>0?"#f87171":"#4ade80"]].map(([label,val,color])=>(
+                        <div key={label} style={{textAlign:"right"}}>
+                          <div style={{fontFamily:"'Sora',sans-serif",fontSize:10,color:"#1f2937",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>{label}</div>
+                          <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color,fontWeight:700}}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── VIAJES VIEW ─────────────────────────────────────────────────────────────
+    function ViajesView({ clients=[], orders=[], viajes=[], onAddViaje, onUpdateViaje, onDeleteViaje, onUpdateOrder }) {
+      const [showNew, setShowNew] = useState(false);
+      const [selected, setSelected] = useState(null); // viaje id detail view
+      const [newName, setNewName] = useState("");
+      const [newFecha, setNewFecha] = useState(today());
+
+      const usd = n => n!=null?`U$D ${parseFloat(n).toFixed(0)}`:"—";
+
+      // Get all items with llegado=true and their client info
+      const allArrivedItems = clients.flatMap(client => {
+        const cOrders = orders.filter(o=>o.clientId===client.id&&o.status!=="cancelado");
+        return cOrders.flatMap(order=>order.items
+          .filter(i=>i.llegado)
+          .map(i=>({
+            ...i, orderId:order.id, clientId:client.id,
+            clientName:client.name, date:order.date,
+            viajeId:i.viajeId||null
+          }))
+        );
+      });
+
+      // Assign item to viaje
+      const assignToViaje = (orderId, itemId, viajeId) => {
+        const order = orders.find(o=>o.id===orderId); if(!order) return;
+        const updatedItems = order.items.map(i=>i.id===itemId?{...i,viajeId}:i);
+        onUpdateOrder(orderId,{items:updatedItems});
+      };
+
+      const viajeItems = (viajeId) => allArrivedItems.filter(i=>i.viajeId===viajeId);
+      const unassigned  = allArrivedItems.filter(i=>!i.viajeId);
+
+      const viajeStats = (items) => {
+        const totalARS    = items.reduce((a,i)=>a+i.price,0);
+        const reservaARS  = items.reduce((a,i)=>a+i.reserva,0);
+        const saldoARS    = items.reduce((a,i)=>a+(i.pagado?0:i.price-i.reserva),0);
+        const costoUSD    = items.filter(i=>i.costo!=null).reduce((a,i)=>a+i.costo,0);
+        const envioUSD    = items.filter(i=>i.peso!=null).reduce((a,i)=>a+i.peso*USD_POR_KG,0);
+        const priceUSDtot = items.reduce((a,i)=>a+(i.priceUSD!=null?i.priceUSD:i.price/ARS_TO_USD),0);
+        const ganancia    = priceUSDtot - costoUSD - envioUSD;
+        return {totalARS,reservaARS,saldoARS,costoUSD,envioUSD,ganancia,count:items.length};
+      };
+
+      const sortedViajes = [...viajes].sort((a,b)=>b.createdAt?.localeCompare(a.createdAt||"")||0);
+      const detailViaje  = selected ? viajes.find(v=>v.id===selected) : null;
+      const detailItems  = selected ? viajeItems(selected) : [];
+      const ds           = selected ? viajeStats(detailItems) : null;
+
+      const s = { fontFamily:"'Sora',sans-serif" };
+      const colH = { background:"#4f46e5",color:"#92400e",padding:"9px 12px",fontSize:10,textTransform:"uppercase",letterSpacing:0.7,fontWeight:700,whiteSpace:"nowrap",borderBottom:"2px solid rgba(251,191,36,0.3)" };
+
+      if (selected && detailViaje) return (
+        <div>
+          {/* Header */}
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:22,flexWrap:"wrap"}}>
+            <button onClick={()=>setSelected(null)} style={{background:"#e8eaf0",border:"1px solid #d4d8e2",borderRadius:10,padding:"8px 10px",cursor:"pointer",color:"#374151",display:"flex",alignItems:"center"}}>
+              <Icon name="back" size={16}/>
+            </button>
+            <div style={{flex:1}}>
+              <h2 style={{...s,fontSize:22,color:"#fbbf24",margin:0,fontWeight:800}}>✈️ {detailViaje.name}</h2>
+              <div style={{...s,fontSize:12,color:"#374151",marginTop:2}}>Fecha de llegada: {detailViaje.fecha} · {detailItems.length} productos</div>
+            </div>
+            <button onClick={()=>{onDeleteViaje(detailViaje.id);setSelected(null);}} style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:"#f87171",...s,fontSize:12,fontWeight:600}}>
+              🗑️ Eliminar viaje
+            </button>
+          </div>
+
+          {/* Stats */}
+          <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+            {[
+              {l:"Productos",v:ds.count,c:"#fbbf24"},
+              {l:"Total ventas",v:ars(ds.totalARS),c:"#a78bfa"},
+              {l:"Cobrado",v:ars(ds.reservaARS),c:"#22c55e"},
+              {l:"Saldo pendiente",v:ars(ds.saldoARS),c:"#f87171"},
+              {l:"Costo",v:usd(ds.costoUSD),c:"#fb923c"},
+              {l:`Envío x${USD_POR_KG}`,v:usd(ds.envioUSD),c:"#f59e0b"},
+              {l:"Ganancia",v:ds.ganancia>0?usd(ds.ganancia):"—",c:"#34d399"},
+            ].map(({l,v,c})=>(
+              <div key={l} style={{background:"#f5f6f9",border:`1px solid ${c}22`,borderRadius:10,padding:"9px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{...s,fontSize:10,color:"#1f2937",fontWeight:700,textTransform:"uppercase",letterSpacing:0.7,fontWeight:600}}>{l}</span>
+                <span style={{...s,fontSize:15,color:c,fontWeight:800}}>{v}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Products table */}
+          {detailItems.length===0?(
+            <div style={{textAlign:"center",padding:"40px",...s,color:"#374151",fontSize:14}}>
+              <div style={{fontSize:36,marginBottom:10}}>📦</div>
+              No hay productos asignados a este viaje todavía.<br/>
+              <span style={{fontSize:12,color:"#374151"}}>Asigná productos desde la lista de abajo.</span>
+            </div>
+          ):(
+            <div style={{borderRadius:14,border:"1px solid #d4d8e2",marginBottom:20,overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  {["Clienta","Producto","Precio","Reserva","Saldo","Costo","Ganancia","Estado"].map((h,i)=>(
+                    <th key={h} style={{...colH,textAlign:i>=2?"right":i===7?"center":"left"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {detailItems.sort((a,b)=>a.clientName.localeCompare(b.clientName,"es")).map((item,idx)=>{
+                    const priceUSD = item.priceUSD!=null?item.priceUSD:item.price/ARS_TO_USD;
+                    const costoEnvio = item.peso!=null?item.peso*USD_POR_KG:null;
+                    const gan = (item.costo!=null||costoEnvio!=null)?priceUSD-(item.costo||0)-(costoEnvio||0):null;
+                    return (
+                      <tr key={item.id} style={{background:idx%2===0?"#eef0f4":"#f5f6f9",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                        <td style={{padding:"10px 12px",...s,fontSize:13,color:"#0f172a",fontWeight:600,fontWeight:700,whiteSpace:"nowrap"}}>{item.clientName}</td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:"#cbd5e1",maxWidth:240}}>
+                          <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.desc}</div>
+                        </td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:"#0f172a",fontWeight:600,textAlign:"right",whiteSpace:"nowrap"}}>
+                          {item.priceUSD!=null?`U$D ${item.priceUSD}`:ars(item.price)}
+                        </td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:"#4ade80",textAlign:"right",whiteSpace:"nowrap"}}>
+                          {item.reservaUSD!=null?`U$D ${item.reservaUSD}`:ars(item.reserva)}
+                        </td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:item.pagado?"#4ade80":"#f87171",fontWeight:700,textAlign:"right",whiteSpace:"nowrap"}}>
+                          {item.pagado?"✓":item.priceUSD!=null?`U$D ${((item.priceUSD||0)-(item.reservaUSD||item.reserva/ARS_TO_USD)).toFixed(0)}`:ars(item.price-item.reserva)}
+                        </td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:"#fb923c",textAlign:"right",whiteSpace:"nowrap"}}>
+                          {item.costo!=null?`U$D ${item.costo}`:"—"}
+                        </td>
+                        <td style={{padding:"10px 12px",...s,fontSize:12,color:gan!=null?(gan>0?"#34d399":"#f87171"):"#475569",fontWeight:700,textAlign:"right",whiteSpace:"nowrap"}}>
+                          {gan!=null?`U$D ${gan.toFixed(0)}`:"—"}
+                        </td>
+                        <td style={{padding:"10px 12px",textAlign:"center"}}>
+                          <button onClick={()=>assignToViaje(item.orderId,item.id,null)} style={{...s,fontSize:10,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:8,padding:"3px 8px",cursor:"pointer",color:"#f87171"}}>
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Unassigned products to add */}
+          {unassigned.length>0&&(
+            <div>
+              <h3 style={{...s,fontSize:14,color:"#374151",fontWeight:600,marginBottom:12}}>
+                📦 Productos llegados sin asignar ({unassigned.length}) — tocá "Agregar" para incluirlos en este viaje
+              </h3>
+              <div style={{display:"grid",gap:6}}>
+                {unassigned.sort((a,b)=>a.clientName.localeCompare(b.clientName,"es")).map(item=>(
+                  <div key={item.id} style={{background:"#eef0f4",borderRadius:10,padding:"10px 14px",border:"1px solid #d4d8e2",display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <span style={{...s,fontSize:12,color:"#a78bfa",fontWeight:700,marginRight:10}}>{item.clientName}</span>
+                      <span style={{...s,fontSize:12,color:"#cbd5e1"}}>{item.desc}</span>
+                    </div>
+                    <span style={{...s,fontSize:12,color:"#0f172a",fontWeight:600,marginRight:8,whiteSpace:"nowrap"}}>
+                      {item.priceUSD!=null?`U$D ${item.priceUSD}`:ars(item.price)}
+                    </span>
+                    <button onClick={()=>assignToViaje(item.orderId,item.id,selected)} style={{...s,fontSize:11,fontWeight:700,background:"rgba(251,191,36,0.15)",border:"1px solid rgba(251,191,36,0.3)",borderRadius:8,padding:"5px 12px",cursor:"pointer",color:"#fbbf24",whiteSpace:"nowrap"}}>
+                      + Agregar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+
+      // LIST VIEW
+      return (
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+            <div>
+              <h2 style={{...s,fontSize:22,color:"#fbbf24",margin:0,fontWeight:800}}>✈️ Cierres por Viaje</h2>
+              <div style={{...s,fontSize:12,color:"#374151",marginTop:4}}>
+                {viajes.length} viaje{viajes.length!==1?"s":""} · {unassigned.length} producto{unassigned.length!==1?"s":""} llegados sin asignar
+              </div>
+            </div>
+            <button onClick={()=>setShowNew(true)} style={{...s,fontSize:13,fontWeight:700,background:"linear-gradient(135deg,#f59e0b,#d97706)",border:"none",borderRadius:10,padding:"10px 20px",cursor:"pointer",color:"#1c1917",display:"flex",alignItems:"center",gap:6}}>
+              <Icon name="plus" size={14}/>Nuevo viaje
+            </button>
+          </div>
+
+          {/* Unassigned alert */}
+          {unassigned.length>0&&(
+            <div style={{background:"rgba(251,191,36,0.08)",border:"1px solid rgba(251,191,36,0.2)",borderRadius:12,padding:"12px 16px",marginBottom:20,display:"flex",alignItems:"center",gap:12}}>
+              <div style={{fontSize:20}}>📦</div>
+              <div style={{...s,fontSize:13,color:"#fbbf24",fontWeight:600}}>
+                {unassigned.length} producto{unassigned.length!==1?"s":""} llegado{unassigned.length!==1?"s":""} a ARG sin asignar a ningún viaje
+              </div>
+            </div>
+          )}
+
+          {/* Viajes list */}
+          {viajes.length===0?(
+            <div style={{textAlign:"center",padding:"60px",...s,color:"#374151"}}>
+              <div style={{fontSize:48,marginBottom:14}}>✈️</div>
+              <div style={{fontSize:15,fontWeight:600,color:"#374151",marginBottom:8}}>Aún no creaste ningún viaje</div>
+              <button onClick={()=>setShowNew(true)} style={{background:"none",border:"1px dashed #334155",borderRadius:10,padding:"9px 20px",color:"#374151",cursor:"pointer",...s,fontSize:13}}>
+                + Crear primer viaje
+              </button>
+            </div>
+          ):(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:12}}>
+              {sortedViajes.map(viaje=>{
+                const items = viajeItems(viaje.id);
+                const st = viajeStats(items);
+                return (
+                  <div key={viaje.id} onClick={()=>setSelected(viaje.id)}
+                    style={{background:"#eef0f4",borderRadius:16,padding:20,border:"1px solid rgba(251,191,36,0.15)",cursor:"pointer",transition:"border .15s,background .15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.06)";e.currentTarget.style.border="1px solid rgba(251,191,36,0.4)"}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.03)";e.currentTarget.style.border="1px solid rgba(251,191,36,0.15)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                      <div>
+                        <div style={{...s,fontSize:16,color:"#fbbf24",fontWeight:800,marginBottom:2}}>✈️ {viaje.name}</div>
+                        <div style={{...s,fontSize:11,color:"#1f2937",fontWeight:700}}>Llegada: {viaje.fecha} · {st.count} productos</div>
+                      </div>
+                      <button onClick={e=>{e.stopPropagation();onDeleteViaje(viaje.id);}} style={{background:"none",border:"none",color:"#374151",cursor:"pointer",padding:4}}>
+                        <Icon name="trash" size={13}/>
+                      </button>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      {[["Ventas",ars(st.totalARS),"#a78bfa"],["Cobrado",ars(st.reservaARS),"#22c55e"],["Saldo",ars(st.saldoARS),"#f87171"],["Ganancia",st.ganancia>0?usd(st.ganancia):"—","#34d399"]].map(([l,v,c])=>(
+                        <div key={l} style={{background:"#f5f6f9",borderRadius:8,padding:"8px 10px"}}>
+                          <div style={{...s,fontSize:9,color:"#1f2937",fontWeight:700,textTransform:"uppercase",letterSpacing:0.7,marginBottom:3}}>{l}</div>
+                          <div style={{...s,fontSize:13,color:c,fontWeight:700}}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* New viaje modal */}
+          {showNew&&(
+            <Modal title="Nuevo viaje" onClose={()=>setShowNew(false)}>
+              <div style={{marginBottom:14}}>
+                <label style={lbl}>Nombre del viaje</label>
+                <input style={inp} value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Ej: Viaje Mayo 2026" autoFocus/>
+              </div>
+              <div style={{marginBottom:22}}>
+                <label style={lbl}>Fecha de llegada a ARG</label>
+                <input style={inp} value={newFecha} onChange={e=>setNewFecha(e.target.value)} placeholder="dd/mm/aaaa"/>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <Btn variant="ghost" onClick={()=>setShowNew(false)} style={{flex:1,justifyContent:"center"}}>Cancelar</Btn>
+                <Btn variant="amber" disabled={!newName.trim()} onClick={()=>{if(newName.trim()){onAddViaje({name:newName.trim(),fecha:newFecha});setShowNew(false);setNewName("");setNewFecha(today());}}} style={{flex:2,justifyContent:"center"}}>
+                  <Icon name="check" size={14}/>Crear viaje
+                </Btn>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
+
+    // ─── CATALOGO VIEW ───────────────────────────────────────────────────────────
+    function CatalogoView({ catalogo, onAdd, onUpdate, onDelete }) {
+      const [showForm, setShowForm] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [search, setSearch] = useState("");
+      const [form, setForm] = useState({ name:"", price:"", priceUSD:false, costo:"", peso:"", photoUrl:"" });
+
+      const resetForm = () => setForm({ name:"", price:"", priceUSD:false, costo:"", peso:"", photoUrl:"" });
+
+      const openNew = () => { resetForm(); setEditing(null); setShowForm(true); };
+      const openEdit = prod => {
+        setForm({ name:prod.name, price:prod.priceUSD!=null?prod.priceUSD:prod.price||"", priceUSD:prod.priceUSD!=null, costo:prod.costo||"", peso:prod.peso||"", photoUrl:prod.photoUrl||"" });
+        setEditing(prod.id); setShowForm(true);
+      };
+
+      const handleSave = () => {
+        if (!form.name.trim()) return;
+        const priceARS = form.priceUSD ? parseFloat(form.price)*ARS_TO_USD : parseFloat(form.price)||0;
+        const item = { name:form.name.trim(), price:priceARS, priceUSD:form.priceUSD?parseFloat(form.price):null, costo:form.costo?parseFloat(form.costo):null, peso:form.peso?parseFloat(form.peso):null, photoUrl:form.photoUrl.trim() };
+        if (editing) { onUpdate(editing, item); }
+        else { onAdd(item); }
+        setShowForm(false); resetForm(); setEditing(null);
+      };
+
+      const filtered = catalogo.filter(p=>p.name.toLowerCase().includes(search.toLowerCase()));
+      const s = { fontFamily:"'Sora',sans-serif" };
+
+      const imgSrc = url => {
+        if (!url) return null;
+        const g = url.match(/gyazo\.com\/([a-zA-Z0-9]+)/);
+        if (g) return `https://i.gyazo.com/${g[1]}.png`;
+        return url;
+      };
+
+      const CurrencyToggle = ({ isUSD, onToggle }) => (
+        <div style={{display:"flex",background:"#e8eaf0",borderRadius:8,padding:2,gap:2}}>
+          {[["ARS","$"],["USD","U$D"]].map(([cur,sym])=>(
+            <button key={cur} onClick={()=>onToggle(cur==="USD")} style={{padding:"3px 10px",borderRadius:6,border:"none",cursor:"pointer",background:(isUSD===(cur==="USD"))?(cur==="USD"?"#16a34a":"#2563eb"):"transparent",color:(isUSD===(cur==="USD"))?"#fff":"#475569",...s,fontSize:11,fontWeight:700}}>
+              {sym} {cur}
+            </button>
+          ))}
+        </div>
+      );
+
+      return (
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+            <div>
+              <h2 style={{...s,fontSize:22,color:"#60a5fa",margin:0,fontWeight:800}}>🛍️ Catálogo de productos</h2>
+              <div style={{...s,fontSize:12,color:"#374151",marginTop:4}}>{catalogo.length} producto{catalogo.length!==1?"s":""} guardado{catalogo.length!==1?"s":""}</div>
+            </div>
+            <button onClick={openNew} style={{...s,fontSize:13,fontWeight:700,background:"linear-gradient(135deg,#3b82f6,#2563eb)",border:"none",borderRadius:10,padding:"10px 20px",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center",gap:6}}>
+              <Icon name="plus" size={14}/>Nuevo producto
+            </button>
+          </div>
+
+          {/* Search */}
+          {catalogo.length>0&&(
+            <div style={{position:"relative",marginBottom:20,maxWidth:400}}>
+              <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",pointerEvents:"none"}}><Icon name="search" size={14}/></div>
+              <input style={{...inp,paddingLeft:36}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar producto..."/>
+            </div>
+          )}
+
+          {/* Grid */}
+          {filtered.length===0?(
+            <div style={{textAlign:"center",padding:"60px",...s,color:"#374151"}}>
+              <div style={{fontSize:48,marginBottom:14}}>🛍️</div>
+              <div style={{fontSize:15,fontWeight:600,color:"#374151",marginBottom:8}}>{catalogo.length===0?"Catálogo vacío":"Sin resultados"}</div>
+              {catalogo.length===0&&<button onClick={openNew} style={{background:"none",border:"1px dashed #334155",borderRadius:10,padding:"9px 20px",color:"#374151",cursor:"pointer",...s,fontSize:13}}>+ Agregar primer producto</button>}
+            </div>
+          ):(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:12}}>
+              {filtered.map(prod=>(
+                <div key={prod.id} style={{background:"#f5f6f9",borderRadius:16,overflow:"hidden",border:"1px solid rgba(96,165,250,0.12)"}}>
+                  {/* Photo */}
+                  {prod.photoUrl?(
+                    <div style={{height:160,background:"#f5f6f9",overflow:"hidden",position:"relative"}}>
+                      <img src={imgSrc(prod.photoUrl)} alt={prod.name} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}}/>
+                    </div>
+                  ):(
+                    <div style={{height:100,background:"rgba(96,165,250,0.05)",display:"flex",alignItems:"center",justifyContent:"center",color:"#374151",fontSize:32}}>🛍️</div>
+                  )}
+                  <div style={{padding:14}}>
+                    <div style={{...s,fontSize:14,color:"#0f172a",fontWeight:800,marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prod.name}</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+                      <span style={{...s,fontSize:11,background:"rgba(96,165,250,0.1)",color:"#60a5fa",borderRadius:6,padding:"3px 8px",fontWeight:600}}>
+                        {prod.priceUSD!=null?`U$D ${prod.priceUSD}`:ars(prod.price||0)}
+                      </span>
+                      {prod.costo!=null&&<span style={{...s,fontSize:11,background:"rgba(251,146,60,0.1)",color:"#fb923c",borderRadius:6,padding:"3px 8px",fontWeight:600}}>Costo U$D {prod.costo}</span>}
+                      {prod.peso!=null&&<span style={{...s,fontSize:11,background:"rgba(96,165,250,0.08)",color:"#60a5fa",borderRadius:6,padding:"3px 8px"}}>{prod.peso}kg</span>}
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>openEdit(prod)} style={{flex:1,padding:"7px",background:"rgba(167,139,250,0.1)",border:"1px solid rgba(167,139,250,0.2)",borderRadius:8,cursor:"pointer",color:"#a78bfa",...s,fontSize:12,fontWeight:600}}>
+                        ✏️ Editar
+                      </button>
+                      <button onClick={()=>onDelete(prod.id)} style={{padding:"7px 10px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.15)",borderRadius:8,cursor:"pointer",color:"#f87171",display:"flex",alignItems:"center"}}>
+                        <Icon name="trash" size={13}/>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Form modal */}
+          {showForm&&(
+            <Modal title={editing?"Editar producto":"Nuevo producto en catálogo"} onClose={()=>{setShowForm(false);resetForm();setEditing(null);}}>
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Nombre del producto *</label>
+                <input style={inp} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="Ej: Remera Nike oversize" autoFocus/>
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                  <label style={{...lbl,marginBottom:0}}>Precio base</label>
+                  <CurrencyToggle isUSD={form.priceUSD} onToggle={v=>setForm(p=>({...p,priceUSD:v}))}/>
+                </div>
+                <div style={{position:"relative"}}>
+                  <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",...s,fontSize:12,fontWeight:700,pointerEvents:"none"}}>{form.priceUSD?"U$D":"$"}</div>
+                  <input style={{...inp,paddingLeft:36}} type="number" value={form.price} onChange={e=>setForm(p=>({...p,price:e.target.value}))} placeholder={form.priceUSD?"0.00":"80000"}/>
+                </div>
+                {form.priceUSD&&form.price&&<div style={{...s,fontSize:11,color:"#1f2937",fontWeight:700,marginTop:4}}>= {ars(parseFloat(form.price)*ARS_TO_USD)}</div>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                <div><label style={lbl}>Costo (USD)</label><input style={inp} type="number" value={form.costo} onChange={e=>setForm(p=>({...p,costo:e.target.value}))} placeholder="0.00"/></div>
+                <div><label style={lbl}>Peso (kg)</label><input style={inp} type="number" value={form.peso} onChange={e=>setForm(p=>({...p,peso:e.target.value}))} placeholder="0.5"/></div>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label style={lbl}>Link de la foto</label>
+                <div style={{position:"relative"}}>
+                  <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#374151",pointerEvents:"none"}}><Icon name="link" size={13}/></div>
+                  <input style={{...inp,paddingLeft:32}} value={form.photoUrl} onChange={e=>setForm(p=>({...p,photoUrl:e.target.value}))} placeholder="https://gyazo.com/..."/>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <Btn variant="ghost" onClick={()=>{setShowForm(false);resetForm();}} style={{flex:1,justifyContent:"center"}}>Cancelar</Btn>
+                <Btn variant="primary" disabled={!form.name.trim()} onClick={handleSave} style={{flex:2,justifyContent:"center"}}>
+                  <Icon name="check" size={14}/>{editing?"Guardar cambios":"Agregar al catálogo"}
+                </Btn>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
+
+    // ─── APP ROOT ────────────────────────────────────────────────────────────────
+    function App() {
+      // Auto-init Firebase — sin login, acceso directo
+      useEffect(() => {
+        const tryInit = () => {
+          if (typeof firebase !== "undefined" && firebase.database) {
+            try { initDb(FIREBASE_CFG); return true; } catch(e) { console.error(e); return false; }
+          }
+          return false;
+        };
+        if (!tryInit()) {
+          let attempts = 0;
+          const iv = setInterval(()=>{
+            attempts++;
+            if (tryInit() || attempts > 40) clearInterval(iv);
+          }, 250);
+        }
+      }, []);
+      const [pwHash] = useState(null);
+      const [fbReady, setFbReady] = useState(true); // render immediately with safe defaults
+      const [showSetup, setShowSetup] = useState(false);
+      const [showPlanilla, setShowPlanilla] = useState(false);
+      const [showViajes, setShowViajes] = useState(false);
+      const [showCatalogo, setShowCatalogo] = useState(false);
+      const [isConnected, setIsConnected] = useState(true);
+      const [data, setData] = useState({ clients:[], orders:[], viajes:[], catalogo:[] });
+      const [syncing, setSyncing] = useState(false);
+      const [lastSaved, setLastSaved] = useState(null);
+      const [selectedClient, setSelectedClient] = useState(null);
+      const [showNewClient, setShowNewClient] = useState(false);
+      const [showEditClient, setShowEditClient] = useState(false);
+      const [showNewOrder, setShowNewOrder] = useState(false);
+      const [showRemito, setShowRemito] = useState(false);
+      const [toast, setToast] = useState(null);
+      const skipNextSync = useRef(false);
+
+      useEffect(() => {
+        const waitForDb = (attempts = 0) => {
+          if (_db) {
+            const unsub = dbListen(remoteData => {
+              if (skipNextSync.current) { skipNextSync.current = false; return; }
+              setData({
+                clients: remoteData.clients || [],
+                orders: remoteData.orders || [],
+                viajes: remoteData.viajes || [],
+                catalogo: remoteData.catalogo || []
+              });
+              setFbReady(true);
+            });
+            setFbReady(true);
+            return unsub;
+          }
+          if (attempts < 50) setTimeout(() => waitForDb(attempts + 1), 300);
+          else setFbReady(true);
+        };
+        setTimeout(() => waitForDb(), 800);
+      }, []);
+
+      const update = nd => {
+        setData(nd);
+        if (isConnected) {
+          skipNextSync.current = true;
+          setSyncing(true);
+          dbSave(nd);
+          setTimeout(() => { setSyncing(false); setLastSaved(new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})); }, 800);
+        }
+      };
+      const notify = (msg, type="ok") => setToast({msg, type});
+      const { clients, orders } = data;
+
+      if (!fbReady) return (
+        <div style={{minHeight:"100vh",background:"#eef0f4",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+          <div style={{fontSize:40}}>✨</div>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#1e293b"}}>GaDigital</div>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color:"#64748b"}}>Conectando...</div>
+        </div>
+      );
+
+      const addClient = ({name,phone,note}) => { update({...data, clients:[...clients,{id:uid(),name,phone,note,createdAt:today()}]}); setShowNewClient(false); notify("✓ Clienta creada"); };
+      const editClient = ({name,phone,note}) => { update({...data, clients:clients.map(c=>c.id===selectedClient.id?{...c,name,phone,note}:c)}); setSelectedClient(p=>({...p,name,phone,note})); setShowEditClient(false); notify("✓ Datos actualizados"); };
+      const deleteClient = id => { update({clients:clients.filter(c=>c.id!==id), orders:orders.filter(o=>o.clientId!==id)}); if(selectedClient?.id===id) setSelectedClient(null); notify("Clienta eliminada","err"); };
+      const addOrder = items => { const tp=items.reduce((a,i)=>a+i.price,0), tr=items.reduce((a,i)=>a+i.reserva,0); update({...data, orders:[...orders,{id:uid(),clientId:selectedClient.id,date:today(),status:"pendiente",items,totalPrice:tp,totalReserva:tr,totalSaldo:tp-tr}]}); setShowNewOrder(false); notify("✓ Pedido guardado"); };
+      const updateOrder = (id,patch) => update({...data, orders:orders.map(o=>o.id===id?{...o,...patch}:o)});
+      const deleteOrder = id => { update({...data, orders:orders.filter(o=>o.id!==id)}); notify("Pedido eliminado","err"); };
+
+      // Viajes CRUD
+      const viajes = data.viajes || [];
+      const addViaje = v => { update({...data, viajes:[...viajes,{id:uid(),...v,createdAt:today()}]}); notify("✓ Viaje creado"); };
+      const updateViaje = (id,patch) => update({...data, viajes:viajes.map(v=>v.id===id?{...v,...patch}:v)});
+      const deleteViaje = id => { update({...data, viajes:viajes.filter(v=>v.id!==id)}); notify("Viaje eliminado","err"); };
+
+      // Catálogo CRUD
+      const catalogo = data.catalogo || [];
+      const addCatalogItem = item => { update({...data, catalogo:[...catalogo,{id:uid(),...item}]}); notify("✓ Producto agregado al catálogo"); };
+      const updateCatalogItem = (id,patch) => update({...data, catalogo:catalogo.map(p=>p.id===id?{...p,...patch}:p)});
+      const deleteCatalogItem = id => { update({...data, catalogo:catalogo.filter(p=>p.id!==id)}); notify("Producto eliminado","err"); };
+
+      useEffect(() => { if(selectedClient){ const r=clients.find(c=>c.id===selectedClient.id); if(r) setSelectedClient(r); } }, [data]);
+
+
+      const navTo = view => { setShowPlanilla(view==="planilla"); setShowViajes(view==="viajes"); setShowCatalogo(view==="catalogo"); setSelectedClient(null); };
+
+      return (
+        <div style={{minHeight:"100vh", background:"#eef0f4", color:"#0f172a"}}>
+          <header style={{background:"#f5f6f9", borderBottom:"1px solid #e2e8f0", padding:"16px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100, backdropFilter:"blur(12px)"}}>
+            <div style={{display:"flex", alignItems:"center", gap:12, cursor:(selectedClient||showPlanilla||showViajes)?"pointer":"default"}} onClick={()=>navTo("clientes")}>
+              <div style={{width:36, height:36, borderRadius:10, background:"linear-gradient(135deg,#a855f7,#7c3aed)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18}}>✨</div>
+              <div>
+                <div style={{fontFamily:"'Sora',sans-serif", fontSize:16, fontWeight:800, color:"#0f172a", lineHeight:1}}>GaDigital</div>
+                <div style={{fontFamily:"'Sora',sans-serif", fontSize:10, color:"#374151", letterSpacing:1, textTransform:"uppercase"}}>Panel de gestión</div>
+              </div>
+            </div>
+            <div style={{display:"flex", alignItems:"center", gap:8}}>
+              {!selectedClient && (<>
+                <button onClick={()=>navTo(showPlanilla?"clientes":"planilla")} style={{
+                  background:showPlanilla?"rgba(167,139,250,0.2)":"rgba(255,255,255,0.05)",
+                  border:showPlanilla?"1px solid rgba(167,139,250,0.4)":"1px solid rgba(255,255,255,0.08)",
+                  borderRadius:8, padding:"6px 12px", cursor:"pointer",
+                  color:showPlanilla?"#a78bfa":"#94a3b8",
+                  fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:600,
+                  display:"flex", alignItems:"center", gap:5
+                }}>📊 {showPlanilla?"Ver clientas":"Ver planilla"}</button>
+                <button onClick={()=>navTo(showViajes?"clientes":"viajes")} style={{
+                  background:showViajes?"rgba(251,191,36,0.2)":"rgba(255,255,255,0.05)",
+                  border:showViajes?"1px solid rgba(251,191,36,0.4)":"1px solid rgba(255,255,255,0.08)",
+                  borderRadius:8, padding:"6px 12px", cursor:"pointer",
+                  color:showViajes?"#fbbf24":"#94a3b8",
+                  fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:600,
+                  display:"flex", alignItems:"center", gap:5
+                }}>✈️ {showViajes?"Ver clientas":"Cierres / Viajes"}</button>
+                <button onClick={()=>navTo(showCatalogo?"clientes":"catalogo")} style={{
+                  background:showCatalogo?"rgba(96,165,250,0.2)":"rgba(255,255,255,0.05)",
+                  border:showCatalogo?"1px solid rgba(96,165,250,0.4)":"1px solid rgba(255,255,255,0.08)",
+                  borderRadius:8, padding:"6px 12px", cursor:"pointer",
+                  color:showCatalogo?"#60a5fa":"#94a3b8",
+                  fontFamily:"'Sora',sans-serif", fontSize:11, fontWeight:600,
+                  display:"flex", alignItems:"center", gap:5
+                }}>🛍️ {showCatalogo?"Ver clientas":"Catálogo"}</button>
+              </>)}
+              <div style={{fontFamily:"'Sora',sans-serif",fontSize:11,color:"#4ade80",display:"flex",alignItems:"center",gap:5,padding:"6px 11px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:8}}>
+                <div style={{width:6,height:6,borderRadius:"50%",background:syncing?"#f59e0b":"#4ade80"}}/>
+                {syncing?"Guardando...":"GaDigital ✓"}
+              </div>
+              {isConnected&&<button onClick={()=>{clearAuthed();setScreen("login");}} style={{background:"#e8eaf0",border:"1px solid #d4d8e2",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"#374151",fontFamily:"'Sora',sans-serif",fontSize:11}}>🔒 Salir</button>}
+              {selectedClient&&<button onClick={()=>setShowEditClient(true)} style={{background:"#e8eaf0",border:"1px solid #d4d8e2",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:"#374151",display:"flex",alignItems:"center",gap:5,fontFamily:"'Sora',sans-serif",fontSize:12}}><Icon name="edit" size={13}/>Editar clienta</button>}
+            </div>
+          </header>
+
+          <main style={{maxWidth:showPlanilla?"100%":showViajes?"100%":showCatalogo?"100%":900, margin:"0 auto", padding:showPlanilla||showViajes||showCatalogo?"20px 32px":"28px 20px"}}>
+            {showPlanilla
+              ? <PlanillaView clients={clients} orders={orders} onUpdateOrder={updateOrder}/>
+              : showViajes
+                ? <ViajesView clients={clients} orders={orders} viajes={viajes} onAddViaje={addViaje} onUpdateViaje={updateViaje} onDeleteViaje={deleteViaje} onUpdateOrder={updateOrder}/>
+                : showCatalogo
+                  ? <CatalogoView catalogo={catalogo} onAdd={addCatalogItem} onUpdate={updateCatalogItem} onDelete={deleteCatalogItem}/>
+                  : !selectedClient
+                    ? <ClientsList clients={clients} orders={orders} onSelect={setSelectedClient} onNewClient={()=>setShowNewClient(true)} onDeleteClient={deleteClient}/>
+                    : <ClientDetail client={selectedClient} orders={orders} catalogo={catalogo} onBack={()=>setSelectedClient(null)} onAddOrder={()=>setShowNewOrder(true)} onUpdateOrder={updateOrder} onDeleteOrder={deleteOrder} onPrint={()=>setShowRemito(true)}/>
+            }
+          </main>
+
+          {showNewClient&&<NewClientModal onSave={addClient} onClose={()=>setShowNewClient(false)}/>}
+          {showEditClient&&selectedClient&&<NewClientModal existing={selectedClient} onSave={editClient} onClose={()=>setShowEditClient(false)}/>}
+          {showNewOrder&&selectedClient&&<NewOrderModal clientName={selectedClient.name} onSave={addOrder} onClose={()=>setShowNewOrder(false)} catalogo={catalogo}/>}
+          {showRemito&&selectedClient&&<RemitoModal client={selectedClient} orders={orders} onClose={()=>setShowRemito(false)}/>}
+          {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
