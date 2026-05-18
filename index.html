@@ -85,13 +85,13 @@
     const dbSave = (data, pwHash) => {
       if (!_db) return;
       const { ref, set } = window._firebaseModules;
-      const path = pwHash ? `protected/${pwHash}/appdata` : "appdata";
+      const path = "gadigital/appdata";
       set(ref(_db, path), data);
     };
     const dbListen = (cb, pwHash) => {
       if (!_db) return () => {};
       const { ref, onValue } = window._firebaseModules;
-      const path = pwHash ? `protected/${pwHash}/appdata` : "appdata";
+      const path = "gadigital/appdata";
       const r = ref(_db, path);
       const unsub = onValue(r, snap => {
         const val = snap.val();
@@ -2069,8 +2069,8 @@
 
     // ─── APP ROOT ────────────────────────────────────────────────────────────────
     function App() {
-      // Auto-init Firebase with hardcoded config
-      const [screen, setScreen] = useState(() => {
+      // Auto-init Firebase — sin login, acceso directo
+      useEffect(() => {
         const tryInit = () => {
           if (window._firebaseModules) { try { initDb(FIREBASE_CFG); return true; } catch { return false; } }
           return false;
@@ -2079,11 +2079,8 @@
           let attempts = 0;
           const iv = setInterval(()=>{ attempts++; if(tryInit()||attempts>30) clearInterval(iv); }, 200);
         }
-        const storedHash = loadPwHash();
-        if (!storedHash) return "setup_password";
-        return loadAuthed() ? "app" : "login";
-      });
-      const [pwHash, setPwHash] = useState(() => loadPwHash());
+      }, []);
+      const [pwHash] = useState(null);
       const [showSetup, setShowSetup] = useState(false);
       const [showPlanilla, setShowPlanilla] = useState(false);
       const [showViajes, setShowViajes] = useState(false);
@@ -2149,19 +2146,6 @@
 
       useEffect(() => { if(selectedClient){ const r=clients.find(c=>c.id===selectedClient.id); if(r) setSelectedClient(r); } }, [data]);
 
-      if (screen === "setup_password") return (
-        <div style={{minHeight:"100vh",background:"#eef0f4",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-          <div style={{width:"100%",maxWidth:420,textAlign:"center"}}>
-            <div style={{fontSize:44,marginBottom:16}}>✨</div>
-            <div style={{fontFamily:"'Sora',sans-serif",fontSize:22,fontWeight:800,color:"#0f172a",marginBottom:6}}>GaDigital</div>
-            <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color:"#374151",marginBottom:28}}>
-              Primera vez — elegí una contraseña para vos y tu socia
-            </div>
-            <SetupPasswordScreen onDone={hash=>{ savePwHash(hash); setPwHash(hash); saveAuthed(); setScreen("app"); }}/>
-          </div>
-        </div>
-      );
-      if (screen === "login") return <LoginScreen onLogin={hash=>{ setPwHash(hash); setScreen("app"); }}/>;
 
       const navTo = view => { setShowPlanilla(view==="planilla"); setShowViajes(view==="viajes"); setShowCatalogo(view==="catalogo"); setSelectedClient(null); };
 
