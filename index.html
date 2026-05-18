@@ -2068,12 +2068,17 @@
       // Auto-init Firebase — sin login, acceso directo
       useEffect(() => {
         const tryInit = () => {
-          if (window._firebaseModules) { try { initDb(FIREBASE_CFG); return true; } catch { return false; } }
+          if (typeof firebase !== "undefined" && firebase.database) {
+            try { initDb(FIREBASE_CFG); return true; } catch(e) { console.error(e); return false; }
+          }
           return false;
         };
         if (!tryInit()) {
           let attempts = 0;
-          const iv = setInterval(()=>{ attempts++; if(tryInit()||attempts>30) clearInterval(iv); }, 200);
+          const iv = setInterval(()=>{
+            attempts++;
+            if (tryInit() || attempts > 40) clearInterval(iv);
+          }, 250);
         }
       }, []);
       const [pwHash] = useState(null);
@@ -2106,14 +2111,14 @@
                 catalogo: remoteData.catalogo || []
               });
               setFbReady(true);
-            }, pwHash);
+            });
             setFbReady(true);
             return unsub;
           }
-          if (attempts < 40) setTimeout(() => waitForDb(attempts + 1), 300);
-          else setFbReady(true); // show app even if Firebase fails
+          if (attempts < 50) setTimeout(() => waitForDb(attempts + 1), 300);
+          else setFbReady(true);
         };
-        setTimeout(() => waitForDb(), 500);
+        setTimeout(() => waitForDb(), 800);
       }, []);
 
       const update = nd => {
