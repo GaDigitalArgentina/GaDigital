@@ -2081,6 +2081,7 @@
         }
       }, []);
       const [pwHash] = useState(null);
+      const [fbReady, setFbReady] = useState(false);
       const [showSetup, setShowSetup] = useState(false);
       const [showPlanilla, setShowPlanilla] = useState(false);
       const [showViajes, setShowViajes] = useState(false);
@@ -2098,20 +2099,26 @@
       const skipNextSync = useRef(false);
 
       useEffect(() => {
-        if (screen !== "app" || !isConnected) return;
         const waitForDb = (attempts = 0) => {
           if (_db) {
             const unsub = dbListen(remoteData => {
               if (skipNextSync.current) { skipNextSync.current = false; return; }
-              setData(remoteData);
+              setData({
+                clients: remoteData.clients || [],
+                orders: remoteData.orders || [],
+                viajes: remoteData.viajes || [],
+                catalogo: remoteData.catalogo || []
+              });
+              setFbReady(true);
             }, pwHash);
+            setFbReady(true);
             return unsub;
           }
-          if (attempts < 30) setTimeout(() => waitForDb(attempts + 1), 300);
+          if (attempts < 40) setTimeout(() => waitForDb(attempts + 1), 300);
+          else setFbReady(true); // show app even if Firebase fails
         };
-        const unsub = waitForDb();
-        return () => { if (typeof unsub === "function") unsub(); };
-      }, [screen, isConnected, pwHash]);
+        setTimeout(() => waitForDb(), 500);
+      }, []);
 
       const update = nd => {
         setData(nd);
@@ -2124,6 +2131,14 @@
       };
       const notify = (msg, type="ok") => setToast({msg, type});
       const { clients, orders } = data;
+
+      if (!fbReady) return (
+        <div style={{minHeight:"100vh",background:"#eef0f4",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+          <div style={{fontSize:40}}>✨</div>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:16,fontWeight:700,color:"#1e293b"}}>GaDigital</div>
+          <div style={{fontFamily:"'Sora',sans-serif",fontSize:13,color:"#64748b"}}>Conectando...</div>
+        </div>
+      );
 
       const addClient = ({name,phone,note}) => { update({...data, clients:[...clients,{id:uid(),name,phone,note,createdAt:today()}]}); setShowNewClient(false); notify("✓ Clienta creada"); };
       const editClient = ({name,phone,note}) => { update({...data, clients:clients.map(c=>c.id===selectedClient.id?{...c,name,phone,note}:c)}); setSelectedClient(p=>({...p,name,phone,note})); setShowEditClient(false); notify("✓ Datos actualizados"); };
