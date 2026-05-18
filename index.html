@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GaDigital</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #eef0f4; font-family: 'Sora', sans-serif; color: #1e293b; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+      <div style="font-size:40px">✨</div>
+      <div style="font-size:18px;font-weight:700">GaDigital</div>
+      <div style="font-size:13px;color:#64748b" id="status">Cargando...</div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+
+  <script>
+    // Init Firebase before React
+    try {
+      firebase.initializeApp({
+        apiKey: "AIzaSyAYqEGv6dQPAQVdHYJh2ug3HLqL1TDOClc",
+        authDomain: "gadigital-a51cc.firebaseapp.com",
+        databaseURL: "https://gadigital-a51cc-default-rtdb.firebaseio.com",
+        projectId: "gadigital-a51cc",
+        storageBucket: "gadigital-a51cc.firebasestorage.app",
+        messagingSenderId: "326069780447",
+        appId: "1:326069780447:web:044c60a18122090113ce6a"
+      });
+      window._db = firebase.database();
+      document.getElementById('status').textContent = 'Firebase OK ✓ — cargando app...';
+    } catch(e) {
+      document.getElementById('status').textContent = 'Error Firebase: ' + e.message;
+    }
+  </script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+      const [data, setData] = useState({ clients:[], orders:[], viajes:[], catalogo:[] });
+      const [ready, setReady] = useState(false);
+      const [status, setStatus] = useState("Conectando a base de datos...");
+
+      useEffect(() => {
+        const tryConnect = (attempts = 0) => {
+          if (window._db) {
+            window._db.ref("gadigital/appdata").on("value", snap => {
+              const val = snap.val() || {};
+              setData({
+                clients:  val.clients  ? Object.values(val.clients)  : [],
+                orders:   val.orders   ? Object.values(val.orders)   : [],
+                viajes:   val.viajes   ? Object.values(val.viajes)   : [],
+                catalogo: val.catalogo ? Object.values(val.catalogo) : []
+              });
+              setReady(true);
+              setStatus("Conectado ✓");
+            });
+          } else if (attempts < 30) {
+            setTimeout(() => tryConnect(attempts + 1), 300);
+          } else {
+            setReady(true);
+            setStatus("Sin conexión — modo offline");
+          }
+        };
+        tryConnect();
+      }, []);
+
+      if (!ready) return (
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+          <div style={{fontSize:40}}>✨</div>
+          <div style={{fontSize:18,fontWeight:700}}>GaDigital</div>
+          <div style={{fontSize:13,color:"#64748b"}}>{status}</div>
+        </div>
+      );
+
+      return (
+        <div style={{minHeight:"100vh",background:"#eef0f4"}}>
+          <header style={{background:"#f5f6f9",borderBottom:"1px solid #d4d8e2",padding:"16px 24px",display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#a855f7,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>✨</div>
+            <div>
+              <div style={{fontSize:16,fontWeight:800}}>GaDigital</div>
+              <div style={{fontSize:10,color:"#64748b",letterSpacing:1,textTransform:"uppercase"}}>Panel de gestión</div>
+            </div>
+            <div style={{marginLeft:"auto",fontSize:11,color:"#22c55e",fontWeight:600}}>● {status}</div>
+          </header>
+          <main style={{maxWidth:900,margin:"0 auto",padding:"28px 20px"}}>
+            <div style={{background:"#f5f6f9",borderRadius:16,padding:24,border:"1px solid #d4d8e2",textAlign:"center"}}>
+              <div style={{fontSize:32,marginBottom:12}}>🎉</div>
+              <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>¡La app está funcionando!</div>
+              <div style={{fontSize:13,color:"#64748b"}}>
+                {data.clients.length} clientas · {data.orders.length} pedidos
+              </div>
+              <div style={{marginTop:16,fontSize:12,color:"#94a3b8"}}>
+                Cargando módulos completos...
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
